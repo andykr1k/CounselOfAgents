@@ -54,7 +54,7 @@ class ModelConfig:
     do_sample: bool = True
     load_in_8bit: bool = False
     load_in_4bit: bool = False
-    trust_remote_code: bool = False
+    trust_remote_code: bool = True
     system_prompt: Optional[str] = None
     
     @staticmethod
@@ -63,14 +63,14 @@ class ModelConfig:
         presets = {
             # Code generation models
             "code": ModelConfig(
-                "bigcode/starcoderbase-1b",
+                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
                 ModelType.CAUSAL_LM,
                 max_length=2048,
                 temperature=0.2,
                 system_prompt="You are an expert programmer. Generate clean, well-commented code."
             ),
             "code_small": ModelConfig(
-                "bigcode/starcoderbase-1b",
+                "Qwen/Qwen2.5-Coder-1.5B-Instruct",
                 ModelType.CAUSAL_LM,
                 max_length=1024,
                 temperature=0.2
@@ -78,14 +78,14 @@ class ModelConfig:
             
             # Writing models
             "writing": ModelConfig(
-                "gpt2",
+                "Qwen/Qwen2.5-1.5B-Instruct",
                 ModelType.CAUSAL_LM,
                 max_length=512,
                 temperature=0.8,
                 system_prompt="You are a professional writer. Create engaging, well-structured content."
             ),
             "writing_medium": ModelConfig(
-                "gpt2-medium",
+                "Qwen/Qwen2.5-1.5B-Instruct",
                 ModelType.CAUSAL_LM,
                 max_length=1024,
                 temperature=0.8
@@ -93,14 +93,14 @@ class ModelConfig:
             
             # Analysis/Evaluation models
             "eval": ModelConfig(
-                "gpt2",
+                "microsoft/phi-2",
                 ModelType.CAUSAL_LM,
                 max_length=512,
                 temperature=0.3,
                 system_prompt="You are an expert evaluator. Analyze and provide critical assessment."
             ),
             "analysis": ModelConfig(
-                "gpt2",
+                "microsoft/phi-2",
                 ModelType.CAUSAL_LM,
                 max_length=512,
                 temperature=0.5,
@@ -109,14 +109,14 @@ class ModelConfig:
             
             # Reading/Comprehension models
             "reading": ModelConfig(
-                "facebook/bart-large-cnn",
+                "google/pegasus-arxiv",
                 ModelType.SEQ2SEQ,
                 max_length=512,
                 temperature=0.3,
                 system_prompt="You are a reading comprehension expert. Summarize and extract key information."
             ),
             "summarization": ModelConfig(
-                "facebook/bart-large-cnn",
+                "google/pegasus-arxiv",
                 ModelType.SEQ2SEQ,
                 max_length=512,
                 temperature=0.3
@@ -124,7 +124,7 @@ class ModelConfig:
             
             # Research models
             "research": ModelConfig(
-                "gpt2",
+                "Qwen/Qwen2.5-1.5B-Instruct",
                 ModelType.CAUSAL_LM,
                 max_length=512,
                 temperature=0.7,
@@ -133,7 +133,7 @@ class ModelConfig:
             
             # Math/Reasoning models
             "math": ModelConfig(
-                "gpt2",
+                "microsoft/phi-2",
                 ModelType.CAUSAL_LM,
                 max_length=256,
                 temperature=0.1,
@@ -148,7 +148,7 @@ class ModelConfig:
             ),
             
             # General purpose (small, fast)
-            "tiny": ModelConfig("gpt2", ModelType.CAUSAL_LM, max_length=256),
+            "tiny": ModelConfig("TinyLlama/TinyLlama-1.1B-Chat-v1.0", ModelType.CAUSAL_LM, max_length=256),
         }
         if name not in presets:
             raise ValueError(f"Unknown preset: {name}. Available: {list(presets.keys())}")
@@ -156,7 +156,6 @@ class ModelConfig:
         for key, value in overrides.items():
             setattr(config, key, value)
         return config
-
 
 @dataclass
 class Task:
