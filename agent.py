@@ -525,13 +525,13 @@ class FileSystemAgent(HuggingFaceAgent):
         config = ModelConfig.preset(
             model_preset,
             system_prompt="""You are a shell command generator. Given a task description, generate ONLY the shell command needed to complete it.
-Return ONLY the command, nothing else. Examples:
-- Task: "read file README.md" -> Command: "cat README.md"
-- Task: "grep 'def' in main.py" -> Command: "grep -n 'def' main.py"
-- Task: "list files in current directory" -> Command: "ls -la"
-- Task: "delete file test.txt" -> Command: "rm test.txt"
-- Task: "write 'hello' to file.txt" -> Command: "echo 'hello' > file.txt"
-Generate the command:""",
+            Return ONLY the command, nothing else. Examples:
+            - Task: "read file README.md" -> Command: "cat README.md"
+            - Task: "grep 'def' in main.py" -> Command: "grep -n 'def' main.py"
+            - Task: "list files in current directory" -> Command: "ls -la"
+            - Task: "delete file test.txt" -> Command: "rm test.txt"
+            - Task: "write 'hello' to file.txt" -> Command: "echo 'hello' > file.txt"
+            Generate the command:""",
             max_length=128,
             temperature=0.1,  # Low temperature for deterministic command generation
             **config_overrides
