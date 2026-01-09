@@ -69,6 +69,9 @@ class Orchestrator:
                 "results": {}
             }
         
+        # Notify that graph is ready for visualization
+        self._update_progress("graph_ready", "Task graph created")
+        
         # Step 4: Execute tasks
         execution_order = self.task_graph.get_execution_order()
         total_levels = len(execution_order)
@@ -158,9 +161,13 @@ class Orchestrator:
                 task.result = result.result
                 self.task_graph.mark_completed(task.id)
                 self._update_progress("success", f"✓ {selected_agent.name} completed task")
+                # Notify graph update
+                self._update_progress("graph_update", f"Task {task.id} completed")
             else:
                 self.task_graph.mark_failed(task.id)
                 self._update_progress("error", f"✗ {selected_agent.name} failed: {result.error}")
+                # Notify graph update
+                self._update_progress("graph_update", f"Task {task.id} failed")
         except Exception as e:
             # Handle execution errors
             self.task_graph.mark_failed(task.id)
@@ -230,3 +237,7 @@ class Orchestrator:
                 for task in self.task_graph.get_all_tasks()
             ]
         }
+    
+    def get_graph_visualization(self):
+        """Get the visual representation of the task graph."""
+        return self.task_graph.get_visualization()

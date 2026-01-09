@@ -86,23 +86,36 @@ class TaskClassifier:
         """Build the prompt for the LLM to classify and route the task."""
         agents_info = self._get_agents_info()
         
-        system_prompt = f"""You are an intelligent task router for a multi-agent system. Your job is to analyze tasks and assign them to the most appropriate agent(s) based on their descriptions and capabilities.
+        system_prompt = f"""You are an intelligent task router for a multi-agent system. Your job is to analyze tasks and break them down into subtasks with dependencies, assigning each to the most appropriate agent(s).
 
         Available Agents:
         {agents_info}
 
         For each task, you must:
-        1. Analyze the task requirements
-        2. Identify which agent(s) should handle it based on their descriptions and capabilities
-        3. Determine the required capabilities
-        4. Provide reasoning for your choice
+        1. Break down complex tasks into subtasks if needed (e.g., "make a project" → "generate code" then "create file")
+        2. Identify which agent(s) should handle each subtask
+        3. Determine dependencies between subtasks
+        4. Provide reasoning
 
-        Respond in this exact format:
+        Respond in this exact format (one line per subtask):
+        SUBTASK: <subtask description>
         AGENT_ID: <agent_id>
         CAPABILITIES: <comma-separated capabilities>
-        REASONING: <brief explanation of why this agent is best suited>
+        DEPENDS_ON: <comma-separated subtask numbers or "none">
+        REASONING: <brief explanation>
 
-        If multiple agents are needed, provide multiple lines with the same format.
+        Example:
+        SUBTASK: Generate Python calculator code
+        AGENT_ID: coding_agent
+        CAPABILITIES: code_generation
+        DEPENDS_ON: none
+        REASONING: Need to generate code first
+
+        SUBTASK: Create calculator.py file with the code
+        AGENT_ID: filesystem_agent
+        CAPABILITIES: file_operations
+        DEPENDS_ON: 1
+        REASONING: Need to create file after code is generated
 
         Task: {prompt}
 
@@ -146,7 +159,69 @@ class TaskClassifier:
             raise RuntimeError(f"Error in model classification: {e}")
     
     def _parse_classification_response(self, response: str, original_prompt: str) -> Dict[str, Any]:
-        """Parse the LLM's classification response."""
+        """Parse the LLM's classification response, handling multiple subtasks."""
+        import re
+        
+        # Split response into subtask blocks
+        subtask_blocks = re.split(r'SUBTASK:', response, re.IGNORECASE)[1:]  # Skip first empty split
+        
+        if not subtask_blocks:
+            # Fallback to single task parsing
+            return self._parse_single_task_response(response)
+        
+        subtasks = []
+        for i, block in enumerate(subtask_blocks):
+            # Extract subtask description
+            desc_match = re.search(r'^(.+?)(?=\nAGENT_ID:)', block, re.IGNORECASE | re.DOTALL)
+            description = desc_match.group(1).strip() if desc_match else f"Subtask {i+1}"
+            
+            # Extract agent ID
+            agent_match = re.search(r'AGENT_ID:\s*(\w+)', block, re.IGNORECASE)
+            agent_id = agent_match.group(1) if agent_match else None
+            
+            # Extract capabilities
+            cap_match = re.search(r'CAPABILITIES:\s*([^\n]+)', block, re.IGNORECASE)
+            capabilities_str = cap_match.group(1) if cap_match else ""
+            capabilities_list = [c.strip() for c in capabilities_str.split(',') if c.strip()]
+            
+            # Map to enum
+            capability_map = {cap.value: cap for cap in AgentCapability}
+            required_capabilities = []
+            for cap_str in capabilities_list:
+                cap_str = cap_str.lower().strip()
+                for key, value in capability_map.items():
+                    if cap_str in key.lower() or key.lower() in cap_str:
+                        required_capabilities.append(value)
+                        break
+            
+            # Extract dependencies
+            dep_match = re.search(r'DEPENDS_ON:\s*([^\n]+)', block, re.IGNORECASE)
+            depends_on_str = dep_match.group(1).strip() if dep_match else "none"
+            depends_on = [] if depends_on_str.lower() == "none" else depends_on_str.split(',')
+            
+            # Extract reasoning
+            reasoning_match = re.search(r'REASONING:\s*(.+?)(?=\nSUBTASK:|$)', block, re.IGNORECASE | re.DOTALL)
+            reasoning = reasoning_match.group(1).strip() if reasoning_match else ""
+            
+            subtasks.append({
+                "description": description,
+                "agent_id": agent_id,
+                "capabilities": list(set(required_capabilities)) if required_capabilities else [AgentCapability.ANALYSIS],
+                "depends_on": [d.strip() for d in depends_on if d.strip()],
+                "reasoning": reasoning
+            })
+        
+        # If no subtasks parsed, fallback to single task
+        if not subtasks:
+            return self._parse_single_task_response(response)
+        
+        return {
+            "subtasks": subtasks,
+            "reasoning": "\n".join([f"{i+1}. {s['reasoning']}" for i, s in enumerate(subtasks)])
+        }
+    
+    def _parse_single_task_response(self, response: str) -> Dict[str, Any]:
+        """Parse a single task response (fallback)."""
         import re
         
         # Extract agent IDs
@@ -226,30 +301,66 @@ class TaskClassifier:
     ) -> List[Task]:
         """
         Asynchronously break down a prompt into tasks with intelligent agent assignment using LLM reasoning.
+        Automatically breaks down complex tasks into subtasks with dependencies.
         
         Args:
             prompt: The user's prompt
             task_id_prefix: Prefix for task IDs
             
         Returns:
-            List of Task objects
+            List of Task objects with dependencies
         """
         classification = await self.classify_async(prompt)
         
-        # Create task with recommended agent IDs in metadata
-        task = Task(
-            id=f"{task_id_prefix}_0",
-            description=prompt,
-            required_capabilities=classification["capabilities"],
-            dependencies=[],
-            metadata={
-                "original_prompt": prompt,
-                "recommended_agents": classification["agent_ids"],
-                "classification_reasoning": classification["reasoning"]
-            }
-        )
-        
-        return [task]
+        # Check if LLM broke down into multiple subtasks
+        if "subtasks" in classification:
+            tasks = []
+            subtasks = classification["subtasks"]
+            
+            for i, subtask_info in enumerate(subtasks):
+                # Resolve dependencies (convert subtask numbers to task IDs)
+                dependencies = []
+                for dep in subtask_info.get("depends_on", []):
+                    try:
+                        # If it's a number, reference previous subtask
+                        dep_num = int(dep.strip())
+                        if 1 <= dep_num <= len(subtasks):
+                            dependencies.append(f"{task_id_prefix}_{dep_num - 1}")
+                    except ValueError:
+                        # If it's already a task ID, use it
+                        dependencies.append(dep.strip())
+                
+                task = Task(
+                    id=f"{task_id_prefix}_{i}",
+                    description=subtask_info["description"],
+                    required_capabilities=subtask_info["capabilities"],
+                    dependencies=dependencies,
+                    metadata={
+                        "original_prompt": prompt,
+                        "recommended_agents": [subtask_info["agent_id"]] if subtask_info.get("agent_id") else [],
+                        "classification_reasoning": subtask_info.get("reasoning", ""),
+                        "subtask_index": i,
+                        "total_subtasks": len(subtasks)
+                    }
+                )
+                tasks.append(task)
+            
+            return tasks
+        else:
+            # Single task (fallback or simple task)
+            task = Task(
+                id=f"{task_id_prefix}_0",
+                description=prompt,
+                required_capabilities=classification["capabilities"],
+                dependencies=[],
+                metadata={
+                    "original_prompt": prompt,
+                    "recommended_agents": classification.get("agent_ids", []),
+                    "classification_reasoning": classification.get("reasoning", "")
+                }
+            )
+            
+            return [task]
     
     def create_subtasks(
         self,

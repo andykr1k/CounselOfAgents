@@ -3,6 +3,12 @@
 from typing import Dict, List, Set, Optional
 from collections import deque
 from agent import Task
+try:
+    from rich.tree import Tree
+    from rich.console import Console
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 
 class TaskGraph:
@@ -130,3 +136,95 @@ class TaskGraph:
     def get_failed_tasks(self) -> List[Task]:
         """Get all failed tasks."""
         return [task for task in self.tasks.values() if task.status == "failed"]
+    
+    def get_visualization(self) -> Optional[str]:
+        """
+        Get a visual representation of the task graph using Rich Tree.
+        Returns a string representation if Rich is not available.
+        
+        Returns:
+            Rich Tree object if Rich is available, otherwise formatted string
+        """
+        if not RICH_AVAILABLE:
+            # Fallback to text representation
+            lines = ["Task Graph:"]
+            for task in self.tasks.values():
+                status_color = {
+                    "completed": "✓",
+                    "pending": "○",
+                    "in_progress": "→",
+                    "failed": "✗"
+                }
+                icon = status_color.get(task.status, "•")
+                deps_str = f" (depends on: {', '.join(task.dependencies)})" if task.dependencies else ""
+                lines.append(f"  {icon} {task.id}: {task.description[:50]}{deps_str}")
+            return "\n".join(lines)
+        
+        # Status color mapping
+        status_styles = {
+            "completed": "[green]✓[/green]",
+            "pending": "[yellow]○[/yellow]",
+            "in_progress": "[blue]→[/blue]",
+            "failed": "[red]✗[/red]"
+        }
+        
+        # Find root tasks (tasks with no dependencies)
+        root_tasks = [
+            task_id for task_id, task in self.tasks.items()
+            if not self.dependencies.get(task_id, set())
+        ]
+        
+        # If no root tasks, show all tasks at top level
+        if not root_tasks:
+            root_tasks = list(self.tasks.keys())
+        
+        # Build tree structure
+        tree = Tree("📋 Task Graph", guide_style="dim")
+        added = set()
+        
+        def add_task_node(task_id: str, parent_node):
+            """Recursively add task nodes to the tree."""
+            if task_id in added:
+                return
+            
+            task = self.tasks.get(task_id)
+            if not task:
+                return
+            
+            added.add(task_id)
+            
+            # Get status icon
+            status_icon = status_styles.get(task.status, "•")
+            
+            # Truncate description if too long
+            desc = task.description[:60] + "..." if len(task.description) > 60 else task.description
+            
+            # Create node label
+            label = f"{status_icon} [bold]{task_id}[/bold]: {desc}"
+            
+            # Add node
+            if parent_node is None:
+                node = tree.add(label)
+            else:
+                node = parent_node.add(label)
+            
+            # Add child tasks (tasks that depend on this one)
+            children = self.reverse_dependencies.get(task_id, set())
+            for child_id in sorted(children):
+                if child_id in self.tasks:
+                    add_task_node(child_id, node)
+        
+        # Start from root tasks
+        for root_id in sorted(root_tasks):
+            add_task_node(root_id, None)
+        
+        # Add any remaining tasks that weren't connected (shouldn't happen in DAG, but handle it)
+        for task_id in sorted(self.tasks.keys()):
+            if task_id not in added:
+                task = self.tasks[task_id]
+                status_icon = status_styles.get(task.status, "•")
+                desc = task.description[:60] + "..." if len(task.description) > 60 else task.description
+                label = f"{status_icon} [bold]{task_id}[/bold]: {desc}"
+                tree.add(label)
+        
+        return tree

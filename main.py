@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.markdown import Markdown
 from rich.table import Table
+from rich.live import Live
 from agent_registry import AgentRegistry
 from orchestrator import Orchestrator
 from agent import (
@@ -49,7 +50,7 @@ def create_all_agents(show_progress=True):
                 errors.append(("File System Agent", str(e)))
             
             # Hugging Face agents
-            hf_agents = [
+            agents = [
                 ("Coding Agent", CodingAgent, "code", "StarCoder"),
                 ("Writing Agent", WritingAgent, "writing", "GPT-2"),
                 ("Evaluation Agent", EvalAgent, "eval", "GPT-2"),
@@ -59,7 +60,7 @@ def create_all_agents(show_progress=True):
                 ("Analysis Agent", AnalysisAgent, "analysis", "GPT-2"),
             ]
             
-            for name, agent_class, preset, model_name in hf_agents:
+            for name, agent_class, preset, model_name in agents:
                 try:
                     progress.update(task, description=f"Loading {name} ({model_name})...")
                     registry.register(agent_class(model_preset=preset))
@@ -131,10 +132,13 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
     # Create progress tracker
     progress_tracker = {}
     progress_task = None
+    graph_live = None
+    graph_displayed = False
     
     def progress_callback(status: str, message: str):
         """Callback for progress updates."""
-        nonlocal progress_task
+        nonlocal progress_task, graph_live, graph_displayed
+        
         if progress_task is None:
             return
         
@@ -144,6 +148,8 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
             "classified": "✓",
             "reasoning": "💭",
             "building": "📋",
+            "graph_ready": "📋",
+            "graph_update": "🔄",
             "executing": "⚙️",
             "success": "✓",
             "error": "✗",
@@ -154,9 +160,34 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
         progress_tracker[progress_task].update(
             description=f"{icon} {message}"
         )
+        
+        # Display or update graph visualization
+        if status in ["graph_ready", "graph_update", "success", "error"]:
+            # Get orchestrator from closure
+            current_orchestrator = orchestrator if orchestrator else None
+            if current_orchestrator:
+                graph_viz = current_orchestrator.get_graph_visualization()
+                if graph_viz:
+                    if not graph_displayed:
+                        # First time displaying the graph
+                        console.print("\n")
+                        graph_displayed = True
+                    
+                    # Create a panel with the graph
+                    graph_panel = Panel(graph_viz, title="[bold cyan]Task Graph[/bold cyan]", border_style="cyan")
+                    
+                    # Use Live to update the graph in place
+                    if graph_live is None:
+                        graph_live = Live(graph_panel, console=console, refresh_per_second=2, vertical_overflow="visible")
+                        graph_live.start()
+                    else:
+                        graph_live.update(graph_panel)
     
     if orchestrator is None:
         orchestrator = Orchestrator(registry, progress_callback=progress_callback)
+    else:
+        # Update existing orchestrator's callback
+        orchestrator.progress_callback = progress_callback
     
     console.print(f"\n[bold cyan]📝 Task:[/bold cyan] {prompt}\n")
     
@@ -168,8 +199,18 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
         progress_task = progress.add_task("Starting...", total=None)
         progress_tracker[progress_task] = progress
         
-        result = await orchestrator.process_prompt(prompt, max_parallel=max_parallel)
-        progress.update(progress_task, completed=True)
+        try:
+            result = await orchestrator.process_prompt(prompt, max_parallel=max_parallel)
+            progress.update(progress_task, completed=True)
+        finally:
+            # Stop the live graph display
+            if graph_live is not None:
+                graph_live.stop()
+                # Print final graph state
+                final_graph = orchestrator.get_graph_visualization()
+                if final_graph:
+                    console.print("\n")
+                    console.print(Panel(final_graph, title="[bold cyan]Final Task Graph[/bold cyan]", border_style="cyan"))
     
     # Display results
     console.print("\n" + "=" * 70)
