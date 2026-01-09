@@ -1,0 +1,9 @@
+# Counsel of Agents - Requirements
+# Python 3.8+
+
+transformers>=4.35.0
+torch>=2.0.0
+accelerate>=0.24.0
+sentencepiece>=0.1.99
+bitsandbytes>=0.41.0
+rich>=13.0.0  # For beautiful terminal output with colors and progress
