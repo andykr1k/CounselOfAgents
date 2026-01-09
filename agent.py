@@ -184,6 +184,8 @@ class AgentResult:
     metadata: Dict[str, Any] = None
     success: bool = True
     error: Optional[str] = None
+    needs_user_input: bool = False
+    question: Optional[str] = None
     
     def __post_init__(self):
         if self.metadata is None:
@@ -217,6 +219,42 @@ class BaseAgent(ABC):
     async def execute(self, task: Task) -> AgentResult:
         """Execute a task and return the result."""
         pass
+    
+    def ask_user(self, task: Task, question: str) -> AgentResult:
+        """
+        Helper method for agents to request user input.
+        
+        When an agent needs clarification or additional information from the user,
+        it can use this method to pause execution and request input. The orchestrator
+        will handle prompting the user and passing the response back to the agent.
+        
+        Example usage in an agent's execute method:
+            async def execute(self, task: Task) -> AgentResult:
+                # Check if we need user input
+                if some_condition:
+                    return self.ask_user(task, "What color would you like?")
+                
+                # After user responds, the task will be re-executed with
+                # task.metadata["user_response"] containing the user's answer
+                user_response = task.metadata.get("user_response")
+                # Continue with user's input...
+        
+        Args:
+            task: The current task
+            question: The question to ask the user
+            
+        Returns:
+            AgentResult with needs_user_input=True and question set
+        """
+        return AgentResult(
+            task_id=task.id,
+            agent_id=self.agent_id,
+            result=None,
+            success=False,  # Not completed yet, waiting for input
+            needs_user_input=True,
+            question=question,
+            metadata={"waiting_for_user": True}
+        )
     
     def get_info(self) -> Dict[str, Any]:
         """Get information about this agent."""

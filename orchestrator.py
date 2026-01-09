@@ -11,19 +11,21 @@ from task_classifier import TaskClassifier
 class Orchestrator:
     """Main orchestrator that coordinates agent execution."""
     
-    def __init__(self, agent_registry: AgentRegistry, progress_callback=None):
+    def __init__(self, agent_registry: AgentRegistry, progress_callback=None, user_input_callback=None):
         """
         Initialize the orchestrator.
         
         Args:
             agent_registry: Registry containing all available agents
             progress_callback: Optional callback function(status, message) for progress updates
+            user_input_callback: Optional callback function(question: str) -> str for getting user input
         """
         self.registry = agent_registry
         self.classifier = TaskClassifier(agent_registry=agent_registry)
         self.task_graph = TaskGraph()
         self.execution_results: Dict[str, AgentResult] = {}
         self.progress_callback = progress_callback
+        self.user_input_callback = user_input_callback
     
     def _update_progress(self, status: str, message: str):
         """Update progress if callback is provided."""
@@ -155,6 +157,52 @@ class Orchestrator:
         try:
             # Execute the task
             result = await selected_agent.execute(task)
+            
+            # Check if agent needs user input
+            if result.needs_user_input and result.question:
+                if not self.user_input_callback:
+                    # No callback provided, mark as failed
+                    self.task_graph.mark_failed(task.id)
+                    self.execution_results[task.id] = AgentResult(
+                        task_id=task.id,
+                        agent_id=selected_agent.agent_id,
+                        result=None,
+                        success=False,
+                        error="Agent requested user input but no user_input_callback provided"
+                    )
+                    self._update_progress("error", f"✗ {selected_agent.name} needs user input but callback not available")
+                    return
+                
+                # Get user input
+                self._update_progress("user_input", f"{selected_agent.name} is asking a question...")
+                user_response = self.user_input_callback(result.question)
+                
+                if user_response is None:
+                    # User cancelled or no response
+                    self.task_graph.mark_failed(task.id)
+                    self.execution_results[task.id] = AgentResult(
+                        task_id=task.id,
+                        agent_id=selected_agent.agent_id,
+                        result=None,
+                        success=False,
+                        error="User input was cancelled or not provided"
+                    )
+                    self._update_progress("error", f"✗ User input cancelled for {selected_agent.name}")
+                    return
+                
+                # Update task with user's response and re-execute
+                # Add user response to task metadata and update description
+                if task.metadata is None:
+                    task.metadata = {}
+                task.metadata["user_response"] = user_response
+                task.metadata["original_description"] = task.description
+                # Update task description to include user's response
+                task.description = f"{task.description}\n\nUser Response: {user_response}"
+                
+                # Re-execute the agent with user's input
+                self._update_progress("executing", f"{selected_agent.name} continuing with your response...")
+                result = await selected_agent.execute(task)
+            
             self.execution_results[task.id] = result
             
             if result.success:

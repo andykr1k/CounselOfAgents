@@ -151,6 +151,7 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
             "graph_ready": "📋",
             "graph_update": "🔄",
             "executing": "⚙️",
+            "user_input": "❓",
             "success": "✓",
             "error": "✗",
             "aggregating": "📊",
@@ -183,11 +184,47 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
                     else:
                         graph_live.update(graph_panel)
     
+    def user_input_callback(question: str) -> str:
+        """Callback for getting user input when agents need it."""
+        nonlocal graph_live, graph_displayed
+        
+        # Stop the progress display temporarily to show the question
+        if graph_live is not None:
+            graph_live.stop()
+            graph_live = None
+        
+        console.print()  # Add spacing
+        console.print(Panel(
+            f"[bold yellow]❓ Question from Agent:[/bold yellow]\n\n{question}",
+            border_style="yellow",
+            title="[bold]User Input Required[/bold]"
+        ))
+        console.print()
+        
+        # Get user input
+        try:
+            response = console.input("[bold cyan]Your answer:[/bold cyan] ")
+            console.print()  # Add spacing after response
+            
+            # Restart graph display if it was running
+            if graph_displayed and orchestrator:
+                graph_viz = orchestrator.get_graph_visualization()
+                if graph_viz:
+                    graph_panel = Panel(graph_viz, title="[bold cyan]Task Graph[/bold cyan]", border_style="cyan")
+                    graph_live = Live(graph_panel, console=console, refresh_per_second=2, vertical_overflow="visible")
+                    graph_live.start()
+            
+            return response.strip() if response.strip() else None
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Input cancelled by user[/yellow]\n")
+            return None
+    
     if orchestrator is None:
-        orchestrator = Orchestrator(registry, progress_callback=progress_callback)
+        orchestrator = Orchestrator(registry, progress_callback=progress_callback, user_input_callback=user_input_callback)
     else:
-        # Update existing orchestrator's callback
+        # Update existing orchestrator's callbacks
         orchestrator.progress_callback = progress_callback
+        orchestrator.user_input_callback = user_input_callback
     
     console.print(f"\n[bold cyan]📝 Task:[/bold cyan] {prompt}\n")
     
@@ -268,7 +305,27 @@ async def interactive_mode():
     
     print_agent_status(agents_created, errors)
     
-    orchestrator = Orchestrator(registry)
+    # Create user input callback for interactive mode
+    def user_input_callback(question: str) -> str:
+        """Callback for getting user input when agents need it."""
+        console.print()  # Add spacing
+        console.print(Panel(
+            f"[bold yellow]❓ Question from Agent:[/bold yellow]\n\n{question}",
+            border_style="yellow",
+            title="[bold]User Input Required[/bold]"
+        ))
+        console.print()
+        
+        # Get user input
+        try:
+            response = console.input("[bold cyan]Your answer:[/bold cyan] ")
+            console.print()  # Add spacing after response
+            return response.strip() if response.strip() else None
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Input cancelled by user[/yellow]\n")
+            return None
+    
+    orchestrator = Orchestrator(registry, user_input_callback=user_input_callback)
     
     # Welcome message
     console.print("\n[bold green]✨ Ready to help![/bold green]")
