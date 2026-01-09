@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  counsel-of-agents:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: counsel-of-agents
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount current directory for file operations
+      - .:/app/workspace
+      # Cache for Hugging Face models
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /app/workspace
+    environment:
+      - PYTHONUNBUFFERED=1
+    # For GPU support, uncomment the following and use Dockerfile.cuda
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]

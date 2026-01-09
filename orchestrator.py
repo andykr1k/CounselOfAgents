@@ -75,7 +75,16 @@ class Orchestrator:
         self._update_progress("graph_ready", "Task graph created")
         
         # Step 4: Execute tasks
-        execution_order = self.task_graph.get_execution_order()
+        try:
+            execution_order = self.task_graph.get_execution_order()
+        except ValueError as e:
+            self._update_progress("error", f"Task graph error: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Task graph error: {str(e)}",
+                "results": {}
+            }
+        
         total_levels = len(execution_order)
         self._update_progress("executing", f"Executing {total_levels} level(s) of tasks...")
         await self._execute_tasks(max_parallel)
@@ -194,10 +203,22 @@ class Orchestrator:
                 # Add user response to task metadata and update description
                 if task.metadata is None:
                     task.metadata = {}
-                task.metadata["user_response"] = user_response
-                task.metadata["original_description"] = task.description
+                
+                # Store original description if not already stored
+                if "original_description" not in task.metadata:
+                    task.metadata["original_description"] = task.description
+                
+                # Append user response to metadata (support multiple questions)
+                if "user_responses" not in task.metadata:
+                    task.metadata["user_responses"] = []
+                task.metadata["user_responses"].append(user_response)
+                task.metadata["user_response"] = user_response  # Keep latest for backward compatibility
+                
                 # Update task description to include user's response
-                task.description = f"{task.description}\n\nUser Response: {user_response}"
+                # Use original description to avoid appending multiple times
+                original_desc = task.metadata.get("original_description", task.description)
+                all_responses = "\n\n".join([f"User Response: {r}" for r in task.metadata["user_responses"]])
+                task.description = f"{original_desc}\n\n{all_responses}"
                 
                 # Re-execute the agent with user's input
                 self._update_progress("executing", f"{selected_agent.name} continuing with your response...")

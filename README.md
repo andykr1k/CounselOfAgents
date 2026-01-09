@@ -6,6 +6,22 @@ An intelligent multi-agent orchestration system that uses real Hugging Face mode
 
 ### Installation
 
+**Option 1: Docker (Recommended)**
+
+```bash
+# Build and run with Docker Compose (CPU)
+docker-compose up --build
+
+# Or build manually
+docker build -t counsel-of-agents .
+docker run -it -v $(pwd):/app/workspace counsel-of-agents
+
+# For GPU support (requires NVIDIA Docker)
+docker-compose -f docker-compose.cuda.yml up --build
+```
+
+**Option 2: Local Installation**
+
 ```bash
 # Install dependencies
 pip install -r requirements.txt
@@ -33,6 +49,15 @@ Just type your task and watch the system work!
 **Single Command:**
 ```bash
 python main.py "Generate a Python function to calculate fibonacci"
+```
+
+**Docker Usage:**
+```bash
+# Interactive mode
+docker run -it -v $(pwd):/app/workspace counsel-of-agents
+
+# Single command
+docker run -it -v $(pwd):/app/workspace counsel-of-agents python main.py "Your task here"
 ```
 
 ## ✨ Features

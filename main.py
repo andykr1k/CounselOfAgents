@@ -26,77 +26,63 @@ from agent import (
 
 console = Console()
 
+# Configuration: Specify which agents to load
+# Format: List of tuples (agent_name, agent_class, model_preset, display_name)
+AGENTS_CONFIG = [
+    ("File System Agent", FileSystemAgent, "tiny", "File System Agent"),
+    ("Coding Agent", CodingAgent, "code", "Coding Agent (StarCoder)"),
+    # Uncomment to enable additional agents:
+    # ("Writing Agent", WritingAgent, "writing", "Writing Agent"),
+    # ("Evaluation Agent", EvalAgent, "eval", "Evaluation Agent"),
+    # ("Reading Agent", ReadingAgent, "reading", "Reading Agent"),
+    # ("Research Agent", ResearchAgent, "research", "Research Agent"),
+    # ("Math Agent", MathAgent, "math", "Math Agent"),
+    # ("Analysis Agent", AnalysisAgent, "analysis", "Analysis Agent"),
+    # ("Translation Agent", TranslationAgent, "translation", "Translation Agent"),
+]
 
-def create_all_agents(show_progress=True):
-    """Create and register all specialized agents."""
+
+def create_all_agents(agents_config=None):
+    """
+    Create and register agents based on configuration.
+    
+    Args:
+        agents_config: List of agent configs. If None, uses AGENTS_CONFIG.
+                      Format: [(agent_name, agent_class, model_preset, display_name), ...]
+    
+    Returns:
+        Tuple of (registry, agents_created, errors)
+    """
+    if agents_config is None:
+        agents_config = AGENTS_CONFIG
+    
     registry = AgentRegistry()
     agents_created = []
     errors = []
     
-    if show_progress:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            task = progress.add_task("Loading agents...", total=None)
-            
-            # File System Agent (uses model to generate commands)
+    # Always show progress and log all actions
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console
+    ) as progress:
+        task = progress.add_task("Loading agents...", total=None)
+        
+        for agent_name, agent_class, preset, display_name in agents_config:
             try:
-                progress.update(task, description="Loading File System Agent...")
-                registry.register(FileSystemAgent(model_preset="tiny"))
-                agents_created.append(("File System Agent", "✓"))
+                progress.update(task, description=f"Loading {display_name}...")
+                console.print(f"[dim]Loading {display_name}...[/dim]")
+                registry.register(agent_class(model_preset=preset))
+                agents_created.append((display_name, "✓"))
+                console.print(f"[green]✓[/green] {display_name} loaded successfully")
+            except ImportError:
+                error_msg = "transformers/torch not installed"
+                errors.append((display_name, error_msg))
+                console.print(f"[red]✗[/red] {display_name}: {error_msg}")
             except Exception as e:
-                errors.append(("File System Agent", str(e)))
-            
-            # Hugging Face agents
-            agents = [
-                ("Coding Agent", CodingAgent, "code", "StarCoder"),
-                ("Writing Agent", WritingAgent, "writing", "GPT-2"),
-                ("Evaluation Agent", EvalAgent, "eval", "GPT-2"),
-                ("Reading Agent", ReadingAgent, "reading", "BART"),
-                ("Research Agent", ResearchAgent, "research", "GPT-2"),
-                ("Math Agent", MathAgent, "math", "GPT-2"),
-                ("Analysis Agent", AnalysisAgent, "analysis", "GPT-2"),
-            ]
-            
-            for name, agent_class, preset, model_name in agents:
-                try:
-                    progress.update(task, description=f"Loading {name} ({model_name})...")
-                    registry.register(agent_class(model_preset=preset))
-                    agents_created.append((name, "✓"))
-                except ImportError:
-                    errors.append((name, "transformers/torch not installed"))
-                except Exception as e:
-                    errors.append((name, str(e)[:50]))
-            
-            # Translation agent (optional)
-            try:
-                progress.update(task, description="Loading Translation Agent...")
-                registry.register(TranslationAgent(model_preset="translation"))
-                agents_created.append(("Translation Agent", "✓"))
-            except Exception:
-                pass  # Translation is optional
-    
-    else:
-        # Quick registration without progress
-        registry.register(FileSystemAgent(model_preset="tiny"))
-        try:
-            registry.register(CodingAgent(model_preset="code"))
-            registry.register(WritingAgent(model_preset="writing"))
-            registry.register(EvalAgent(model_preset="eval"))
-            registry.register(ReadingAgent(model_preset="reading"))
-            registry.register(ResearchAgent(model_preset="research"))
-            registry.register(MathAgent(model_preset="math"))
-            registry.register(AnalysisAgent(model_preset="analysis"))
-            try:
-                registry.register(TranslationAgent(model_preset="translation"))
-            except Exception:
-                pass
-        except ImportError:
-            console.print("[red]Error: transformers/torch not installed[/red]")
-            console.print("Install with: [cyan]pip install transformers torch accelerate[/cyan]")
-            sys.exit(1)
+                error_msg = str(e)[:100]
+                errors.append((display_name, error_msg))
+                console.print(f"[red]✗[/red] {display_name}: {error_msg}")
     
     return registry, agents_created, errors
 
@@ -122,24 +108,28 @@ def print_agent_status(agents_created, errors):
 async def process_task(prompt: str, max_parallel: int = 3, registry=None, orchestrator=None):
     """Process a task using the orchestrator with detailed progress updates."""
     if registry is None:
-        registry, agents_created, errors = create_all_agents(show_progress=False)
+        registry, agents_created, errors = create_all_agents()
         if not registry.get_all_agents():
             console.print("[red]❌ No agents available![/red]")
-            return None, None
+            return {
+                "success": False,
+                "error": "No agents available",
+                "results": {}
+            }
     else:
         agents_created, errors = [], []
     
     # Create progress tracker
-    progress_tracker = {}
+    progress_obj = None
     progress_task = None
     graph_live = None
     graph_displayed = False
     
     def progress_callback(status: str, message: str):
         """Callback for progress updates."""
-        nonlocal progress_task, graph_live, graph_displayed
+        nonlocal progress_task, progress_obj, graph_live, graph_displayed
         
-        if progress_task is None:
+        if progress_task is None or progress_obj is None:
             return
         
         # Update progress with status and message
@@ -158,9 +148,7 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
             "complete": "✅"
         }
         icon = status_icons.get(status, "•")
-        progress_tracker[progress_task].update(
-            description=f"{icon} {message}"
-        )
+        progress_obj.update(progress_task, description=f"{icon} {message}")
         
         # Display or update graph visualization
         if status in ["graph_ready", "graph_update", "success", "error"]:
@@ -190,7 +178,10 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
         
         # Stop the progress display temporarily to show the question
         if graph_live is not None:
-            graph_live.stop()
+            try:
+                graph_live.stop()
+            except Exception:
+                pass  # Ignore errors when stopping
             graph_live = None
         
         console.print()  # Add spacing
@@ -206,13 +197,6 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
             response = console.input("[bold cyan]Your answer:[/bold cyan] ")
             console.print()  # Add spacing after response
             
-            # Restart graph display if it was running
-            if graph_displayed and orchestrator:
-                graph_viz = orchestrator.get_graph_visualization()
-                if graph_viz:
-                    graph_panel = Panel(graph_viz, title="[bold cyan]Task Graph[/bold cyan]", border_style="cyan")
-                    graph_live = Live(graph_panel, console=console, refresh_per_second=2, vertical_overflow="visible")
-                    graph_live.start()
             
             return response.strip() if response.strip() else None
         except (KeyboardInterrupt, EOFError):
@@ -233,16 +217,20 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
         TextColumn("[progress.description]{task.description}"),
         console=console
     ) as progress:
+        progress_obj = progress
         progress_task = progress.add_task("Starting...", total=None)
-        progress_tracker[progress_task] = progress
         
+        result = None
         try:
             result = await orchestrator.process_prompt(prompt, max_parallel=max_parallel)
             progress.update(progress_task, completed=True)
         finally:
             # Stop the live graph display
             if graph_live is not None:
-                graph_live.stop()
+                try:
+                    graph_live.stop()
+                except Exception:
+                    pass  # Ignore errors when stopping
                 # Print final graph state
                 final_graph = orchestrator.get_graph_visualization()
                 if final_graph:
@@ -250,6 +238,14 @@ async def process_task(prompt: str, max_parallel: int = 3, registry=None, orches
                     console.print(Panel(final_graph, title="[bold cyan]Final Task Graph[/bold cyan]", border_style="cyan"))
     
     # Display results
+    if result is None:
+        console.print("[red]❌ Task execution failed before completion[/red]")
+        return {
+            "success": False,
+            "error": "Task execution failed before completion",
+            "results": {}
+        }
+    
     console.print("\n" + "=" * 70)
     
     if result['success']:
@@ -296,7 +292,7 @@ async def interactive_mode():
     
     # Load agents
     console.print("\n[dim]Loading specialized agents...[/dim]")
-    registry, agents_created, errors = create_all_agents(show_progress=True)
+    registry, agents_created, errors = create_all_agents()
     
     if not registry.get_all_agents():
         console.print("[red]❌ No agents available![/red]")
@@ -412,15 +408,15 @@ def main():
     # Show banner (only for non-interactive single commands)
     if args.prompt and not args.interactive:
         banner = """
-# Counsel of Agents
+        # Counsel of Agents
 
-Multi-agent orchestration system with specialized agents
+        Multi-agent orchestration system with specialized agents
         """
         console.print(Panel(Markdown(banner), border_style="cyan"))
     
     # List agents
     if args.list_agents:
-        registry, agents_created, errors = create_all_agents(show_progress=False)
+        registry, agents_created, errors = create_all_agents()
         print_agent_status(agents_created, errors)
         return
     

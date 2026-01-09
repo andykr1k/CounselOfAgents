@@ -91,31 +91,47 @@ class TaskClassifier:
         Available Agents:
         {agents_info}
 
+        IMPORTANT: Always break down complex tasks into multiple subtasks. For example:
+        - "Make a python calculator file" should become: (1) Generate code, (2) Navigate to directory, (3) Create file, (4) Write code to file
+        - "Create a project" should become: (1) Generate code, (2) Create directory structure, (3) Create files, (4) Write code to files
+
         For each task, you must:
-        1. Break down complex tasks into subtasks if needed (e.g., "make a project" → "generate code" then "create file")
+        1. ALWAYS break down complex tasks into subtasks (even simple tasks should be broken down if they involve multiple steps)
         2. Identify which agent(s) should handle each subtask
-        3. Determine dependencies between subtasks
+        3. Determine dependencies between subtasks (earlier subtasks have lower numbers)
         4. Provide reasoning
 
-        Respond in this exact format (one line per subtask):
+        Respond in this exact format (one subtask per block):
         SUBTASK: <subtask description>
         AGENT_ID: <agent_id>
         CAPABILITIES: <comma-separated capabilities>
-        DEPENDS_ON: <comma-separated subtask numbers or "none">
+        DEPENDS_ON: <subtask number or "none">
         REASONING: <brief explanation>
 
-        Example:
-        SUBTASK: Generate Python calculator code
+        Example for "Make a python calculator file at root of my system":
+        SUBTASK: Generate Python calculator code with basic operations (add, subtract, multiply, divide)
         AGENT_ID: coding_agent
         CAPABILITIES: code_generation
         DEPENDS_ON: none
-        REASONING: Need to generate code first
+        REASONING: First step is to generate the calculator code
 
-        SUBTASK: Create calculator.py file with the code
+        SUBTASK: Navigate to root directory of the system
         AGENT_ID: filesystem_agent
         CAPABILITIES: file_operations
-        DEPENDS_ON: 1
-        REASONING: Need to create file after code is generated
+        DEPENDS_ON: none
+        REASONING: Can navigate to directory independently
+
+        SUBTASK: Create calculator.py file at root directory
+        AGENT_ID: filesystem_agent
+        CAPABILITIES: file_operations
+        DEPENDS_ON: 2
+        REASONING: Create file after navigating to root directory
+
+        SUBTASK: Write the generated calculator code to calculator.py file
+        AGENT_ID: filesystem_agent
+        CAPABILITIES: file_operations
+        DEPENDS_ON: 1, 3
+        REASONING: Write code to file after both code is generated and file is created
 
         Task: {prompt}
 
@@ -133,17 +149,22 @@ class TaskClassifier:
         try:
             # Run pipeline in executor to avoid blocking
             import asyncio
-            loop = asyncio.get_event_loop()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop, create new one (shouldn't happen in async context)
+                loop = asyncio.new_event_loop()
             result = await loop.run_in_executor(
                 None,
                 lambda: self.pipeline(
                     classification_prompt,
-                    max_length=512,
+                    max_length=1024,  # Increased for better multi-subtask responses
                     temperature=0.3,
                     top_p=0.9,
                     do_sample=True,
                     return_full_text=False,
-                    num_return_sequences=1
+                    num_return_sequences=1,
+                    truncation=True
                 )
             )
             
@@ -152,8 +173,20 @@ class TaskClassifier:
             else:
                 response = str(result)
             
+            # Log the raw response for debugging
+            import logging
+            logging.debug(f"Task classifier raw response: {response[:500]}")
+            
             # Parse the response
-            return self._parse_classification_response(response, prompt)
+            parsed = self._parse_classification_response(response, prompt)
+            
+            # Log parsed result
+            if "subtasks" in parsed:
+                logging.debug(f"Parsed {len(parsed['subtasks'])} subtasks")
+            else:
+                logging.debug("Fell back to single task parsing")
+            
+            return parsed
         
         except Exception as e:
             raise RuntimeError(f"Error in model classification: {e}")
@@ -197,7 +230,11 @@ class TaskClassifier:
             # Extract dependencies
             dep_match = re.search(r'DEPENDS_ON:\s*([^\n]+)', block, re.IGNORECASE)
             depends_on_str = dep_match.group(1).strip() if dep_match else "none"
-            depends_on = [] if depends_on_str.lower() == "none" else depends_on_str.split(',')
+            if depends_on_str.lower() == "none" or not depends_on_str:
+                depends_on = []
+            else:
+                # Handle comma-separated or space-separated numbers
+                depends_on = [d.strip() for d in re.split(r'[, ]+', depends_on_str) if d.strip()]
             
             # Extract reasoning
             reasoning_match = re.search(r'REASONING:\s*(.+?)(?=\nSUBTASK:|$)', block, re.IGNORECASE | re.DOTALL)
@@ -294,6 +331,67 @@ class TaskClassifier:
         """
         raise RuntimeError("Synchronous task creation not supported. Use create_tasks_from_prompt_async() for LLM-based reasoning.")
     
+    def _programmatic_breakdown(self, prompt: str) -> Dict[str, Any]:
+        """
+        Programmatic fallback to break down common task patterns.
+        Used when LLM fails to break down tasks properly.
+        """
+        import re
+        
+        prompt_lower = prompt.lower()
+        
+        # Pattern: "make/create/write a [language] [type] file [location]"
+        file_pattern = re.search(
+            r'(?:make|create|write|generate)\s+(?:a\s+)?(?:python|java|javascript|typescript|c\+\+|c|go|rust|html|css|json|yaml|xml|markdown|txt|text)?\s*(\w+)?\s*(?:file|script|program|code|application)(?:\s+(?:at|in|to)\s+(.+))?',
+            prompt_lower
+        )
+        
+        if file_pattern:
+            file_type = file_pattern.group(1) or "file"
+            location = file_pattern.group(2) or "current directory"
+            
+            # Extract file extension or name from original prompt
+            file_name_match = re.search(r'(\w+\.(?:py|js|ts|java|cpp|c|go|rs|html|css|json|yaml|xml|md|txt))', prompt, re.IGNORECASE)
+            file_name = file_name_match.group(1) if file_name_match else f"{file_type}.py"
+            
+            subtasks = [
+                {
+                    "description": f"Generate {file_name} code based on: {prompt}",
+                    "agent_id": "coding_agent",
+                    "capabilities": [AgentCapability.CODE_GENERATION],
+                    "depends_on": [],
+                    "reasoning": "First, generate the code for the file"
+                },
+                {
+                    "description": f"Navigate to {location}",
+                    "agent_id": "filesystem_agent",
+                    "capabilities": [AgentCapability.FILE_OPERATIONS],
+                    "depends_on": [],
+                    "reasoning": f"Navigate to the target location: {location}"
+                },
+                {
+                    "description": f"Create {file_name} file at {location}",
+                    "agent_id": "filesystem_agent",
+                    "capabilities": [AgentCapability.FILE_OPERATIONS],
+                    "depends_on": ["2"],  # Depends on subtask 2 (navigate)
+                    "reasoning": "Create the file after navigating to the location"
+                },
+                {
+                    "description": f"Write the generated code to {file_name}",
+                    "agent_id": "filesystem_agent",
+                    "capabilities": [AgentCapability.FILE_OPERATIONS],
+                    "depends_on": ["1", "3"],  # Depends on subtask 1 (generate code) and 3 (create file)
+                    "reasoning": "Write code to file after both code is generated and file is created"
+                }
+            ]
+            
+            return {
+                "subtasks": subtasks,
+                "reasoning": "Programmatically broken down into: generate code, navigate, create file, write code"
+            }
+        
+        return None
+    
     async def create_tasks_from_prompt_async(
         self,
         prompt: str,
@@ -312,7 +410,16 @@ class TaskClassifier:
         """
         classification = await self.classify_async(prompt)
         
-        # Check if LLM broke down into multiple subtasks
+        # If LLM didn't break down into subtasks, try programmatic fallback
+        if "subtasks" not in classification:
+            programmatic = self._programmatic_breakdown(prompt)
+            if programmatic:
+                # Log that we're using programmatic breakdown
+                import logging
+                logging.info("Using programmatic task breakdown (LLM did not generate subtasks)")
+                classification = programmatic
+        
+        # Check if we have subtasks (either from LLM or programmatic)
         if "subtasks" in classification:
             tasks = []
             subtasks = classification["subtasks"]
@@ -324,11 +431,17 @@ class TaskClassifier:
                     try:
                         # If it's a number, reference previous subtask
                         dep_num = int(dep.strip())
-                        if 1 <= dep_num <= len(subtasks):
-                            dependencies.append(f"{task_id_prefix}_{dep_num - 1}")
+                        if 1 <= dep_num <= len(subtasks) and dep_num != i + 1:  # Can't depend on itself
+                            dep_task_id = f"{task_id_prefix}_{dep_num - 1}"
+                            # Validate that the dependency task will exist
+                            if dep_num - 1 < len(subtasks):
+                                dependencies.append(dep_task_id)
                     except ValueError:
-                        # If it's already a task ID, use it
-                        dependencies.append(dep.strip())
+                        # If it's already a task ID, use it (but validate it's in our subtask range)
+                        dep_id = dep.strip()
+                        # Check if it's a valid task ID format
+                        if dep_id.startswith(task_id_prefix):
+                            dependencies.append(dep_id)
                 
                 task = Task(
                     id=f"{task_id_prefix}_{i}",
@@ -379,10 +492,22 @@ class TaskClassifier:
         for i, desc in enumerate(subtask_descriptions):
             # Use async classification
             try:
-                loop = asyncio.get_event_loop()
-                classification = loop.run_until_complete(self.classify_async(desc))
-                capabilities = classification["capabilities"]
-            except:
+                # Try to get running loop, or create new one if needed
+                try:
+                    loop = asyncio.get_running_loop()
+                    # If we're in an async context, we can't use run_until_complete
+                    # This method should not be called from async context
+                    raise RuntimeError("create_subtasks cannot be called from async context. Use create_tasks_from_prompt_async instead.")
+                except RuntimeError:
+                    # No running loop, create new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        classification = loop.run_until_complete(self.classify_async(desc))
+                        capabilities = classification["capabilities"]
+                    finally:
+                        loop.close()
+            except Exception:
                 # Fallback if async not available
                 capabilities = [AgentCapability.ANALYSIS]
             

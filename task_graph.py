@@ -44,9 +44,17 @@ class TaskGraph:
         for task in self.tasks.values():
             if task.status == "pending":
                 # Check if all dependencies are completed
+                deps = self.dependencies.get(task.id, set())
+                missing_deps = [dep_id for dep_id in deps if dep_id not in self.tasks]
+                if missing_deps:
+                    import warnings
+                    warnings.warn(
+                        f"Task {task.id} has dependencies that don't exist in graph: {missing_deps}"
+                    )
+                
                 if all(
                     self.tasks[dep_id].status == "completed"
-                    for dep_id in self.dependencies[task.id]
+                    for dep_id in deps
                     if dep_id in self.tasks
                 ):
                     ready.append(task)
@@ -120,7 +128,14 @@ class TaskGraph:
                     current_level.append(task_id)
             
             if not current_level:
-                # This shouldn't happen if graph is acyclic, but handle it
+                # If we have remaining tasks but can't find any ready, there might be a bug
+                # or missing dependencies. Log a warning and break to avoid infinite loop.
+                if remaining:
+                    import warnings
+                    warnings.warn(
+                        f"Task graph execution stuck: {len(remaining)} tasks remaining but none are ready. "
+                        f"Remaining tasks: {list(remaining)}. This may indicate missing dependencies or a bug."
+                    )
                 break
             
             levels.append(current_level)

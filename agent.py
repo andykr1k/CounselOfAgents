@@ -603,15 +603,41 @@ class FileSystemAgent(HuggingFaceAgent):
             # Take first line only, as that should be the command
             command = command.split('\n')[0].strip()
             
-            # Safety check: don't allow dangerous commands
-            dangerous_commands = ['rm -rf /', 'format', 'dd if=', 'mkfs', 'fdisk']
-            if any(danger in command.lower() for danger in dangerous_commands):
+            # Safety checks: don't allow dangerous commands
+            command_lower = command.lower()
+            
+            # Check for dangerous patterns
+            dangerous_patterns = [
+                'rm -rf /',  # Delete root
+                'rm -rf /',  # Delete root (with space)
+                'format ',   # Disk formatting
+                'dd if=',    # Disk operations
+                'mkfs',      # File system creation
+                'fdisk',     # Partition table manipulation
+                'sudo rm',   # Sudo delete
+                'sudo rm -rf',  # Sudo recursive delete
+                'chmod 777 /',  # Dangerous permissions
+                '> /dev/',   # Redirect to device
+            ]
+            
+            if any(pattern in command_lower for pattern in dangerous_patterns):
                 return AgentResult(
                     task_id=task.id,
                     agent_id=self.agent_id,
                     result=f"Error: Potentially dangerous command blocked: {command}",
                     success=False,
                     error="Dangerous command detected",
+                    metadata={"generated_command": command, "operation": "filesystem"}
+                )
+            
+            # Additional check: ensure command is not empty
+            if not command or not command.strip():
+                return AgentResult(
+                    task_id=task.id,
+                    agent_id=self.agent_id,
+                    result="Error: Empty command generated",
+                    success=False,
+                    error="Empty command",
                     metadata={"generated_command": command, "operation": "filesystem"}
                 )
             
