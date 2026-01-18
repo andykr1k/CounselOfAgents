@@ -1,9 +1,20 @@
-# Counsel of Agents - Requirements
-# Python 3.8+
+# Agent Orchestration System
+# Python 3.10+
 
-transformers>=4.35.0
+# Core ML dependencies
 torch>=2.0.0
-accelerate>=0.24.0
-sentencepiece>=0.1.99
-bitsandbytes>=0.41.0
-rich>=13.0.0  # For beautiful terminal output with colors and progress
+transformers>=4.40.0
+accelerate>=0.27.0
+
+# Quantization (for efficient 4-bit inference)
+bitsandbytes>=0.43.0
+
+# Tokenizers
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+
+# CLI and display
+rich>=13.7.0
+
+# Optional: for faster inference
+flash-attn>=2.5.0  # Requires CUDA

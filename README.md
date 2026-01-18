@@ -1,253 +1,273 @@
-# Counsel of Agents
+# Agent Orchestration System
 
-An intelligent multi-agent orchestration system that uses real Hugging Face models to route and execute tasks across specialized agents. Simply describe what you need, and the system automatically selects the right agents and performs all necessary actions.
+A multi-agent system that breaks down complex, long-horizon tasks into a dependency graph and executes them in parallel. Features a **shared workspace** for agent coordination and an **interactive shell** for direct control.
 
-## 🚀 Quick Start
+## Key Features
 
-### Installation
+- **🤖 Single Orchestrator** - One intelligent agent that decomposes complex tasks
+- **📊 DAG-Based Execution** - Tasks run in parallel, respecting dependencies  
+- **🔄 Shared Workspace** - Agents see each other's files, directories, and activities
+- **💻 Interactive Shell** - Run shell commands alongside orchestrated tasks
+- **🔌 General-Purpose Agents** - No specialized agents; all workers are identical
+- **🐚 Full Shell Access** - Agents can run any command (ls, git, npm, etc.)
 
-**Option 1: Docker (Recommended)**
+## Architecture
 
-```bash
-# Build and run with Docker Compose (CPU)
-docker-compose up --build
-
-# Or build manually
-docker build -t counsel-of-agents .
-docker run -it -v $(pwd):/app/workspace counsel-of-agents
-
-# For GPU support (requires NVIDIA Docker)
-docker-compose -f docker-compose.cuda.yml up --build
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        ORCHESTRATOR                          │
+│  ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐  │
+│  │ Task Planner │   │  Task Graph  │   │ Execution Engine │  │
+│  │  (LLM-based) │   │    (DAG)     │   │  (Agent Spawner) │  │
+│  └──────────────┘   └──────────────┘   └──────────────────┘  │
+└────────────────────────────┬─────────────────────────────────┘
+                             │
+              ┌──────────────┴──────────────┐
+              │      SHARED WORKSPACE       │
+              │  • Files & Directories      │
+              │  • Agent Activities         │
+              │  • Shared Variables         │
+              │  • Project Context          │
+              └──────────────┬──────────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         ▼                   ▼                   ▼
+   ┌───────────┐       ┌───────────┐       ┌───────────┐
+   │  Agent 1  │       │  Agent 2  │       │  Agent 3  │
+   │  [shell]  │◄─────►│  [shell]  │◄─────►│  [shell]  │
+   └───────────┘       └───────────┘       └───────────┘
+         │                   │                   │
+         └───────────────────┴───────────────────┘
+                    Coordination via Workspace
 ```
 
-**Option 2: Local Installation**
+## How Agent Coordination Works
+
+Agents share context through the **Workspace**:
+
+1. **File Tracking**: When Agent 1 creates `src/index.js`, Agent 2 knows about it
+2. **Activity Log**: Agents see what others are doing in real-time
+3. **Shared Variables**: Tasks can pass data to dependent tasks
+4. **Project Structure**: All agents understand the current directory layout
+
+```python
+# Example: Agent 2 receives this context
+"""
+## Project Structure
+Root: /home/user/my-project
+Current directory: /home/user/my-project
+
+### Files in workspace:
+  - package.json (by agent_1)
+  - src/index.js (by agent_1)
+
+### Other agents currently working:
+  - agent_3: Setting up database configuration...
+
+### Recent activities:
+  - [agent_1] created_file: package.json
+  - [agent_1] ran_command: npm init -y
+"""
+```
+
+## Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/yourusername/CounselOfAgents.git
+cd CounselOfAgents
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
 # Install dependencies
 pip install -r requirements.txt
-
-# Install as command-line tool (optional)
-pip install -e .
 ```
 
-### Usage
+## Usage
 
-**Interactive Mode (Recommended):**
+### Interactive Shell Mode (Recommended)
+
 ```bash
-agent
-# or
 python main.py
 ```
 
-You'll see:
-```
-💬 What can I help you with?
-```
-
-Just type your task and watch the system work!
-
-**Single Command:**
-```bash
-python main.py "Generate a Python function to calculate fibonacci"
-```
-
-**Docker Usage:**
-```bash
-# Interactive mode
-docker run -it -v $(pwd):/app/workspace counsel-of-agents
-
-# Single command
-docker run -it -v $(pwd):/app/workspace counsel-of-agents python main.py "Your task here"
-```
-
-## ✨ Features
-
-- **🤖 9 Specialized Agents** - Each using real Hugging Face models:
-  - **Coding Agent** - Code generation (StarCoder)
-  - **Writing Agent** - Content creation (GPT-2)
-  - **Evaluation Agent** - Critical analysis (GPT-2)
-  - **Reading Agent** - Summarization & comprehension (BART)
-  - **Research Agent** - Information gathering (GPT-2)
-  - **Math Agent** - Problem solving (GPT-2)
-  - **Analysis Agent** - General analysis (GPT-2)
-  - **Translation Agent** - Language translation (Helsinki-NLP)
-  - **File System Agent** - File operations & shell commands (GPT-2)
-
-- **🧠 Intelligent Routing** - LLM-based task classifier understands all agents and routes tasks intelligently
-- **⚡ Parallel Execution** - Multiple agents work simultaneously on independent tasks
-- **📊 Real-time Progress** - See exactly what's happening with live updates
-- **🔌 Plug-and-Play** - Add new agents easily - they self-describe and are automatically discovered
-
-## 📖 How It Works
-
-1. **You describe your task** - "Generate a Python function" or "Read file README.md"
-2. **LLM analyzes the task** - The classifier understands all agents and their specializations
-3. **Best agent(s) are selected** - System routes to the most appropriate agent(s)
-4. **Tasks execute with progress** - You see real-time updates as agents work
-5. **Results are returned** - Formatted output with agent usage summary
-
-## 🎯 Example Tasks
-
-### Code Generation
-```bash
-agent
-💬 What can I help you with? Generate a Python function to sort a list
-```
-
-### File Operations
-```bash
-💬 What can I help you with? Read file README.md
-💬 What can I help you with? Grep 'def' in main.py
-💬 What can I help you with? List files in current directory
-```
-
-### Writing & Analysis
-```bash
-💬 What can I help you with? Write a summary about machine learning
-💬 What can I help you with? Evaluate the pros and cons of Python
-💬 What can I help you with? Research information about neural networks
-```
-
-## 🏗️ Architecture
-
-The system consists of 6 core files:
-
-- **`agent.py`** - Base agent framework and all specialized agent implementations
-- **`agent_registry.py`** - Dynamic agent discovery and management
-- **`task_classifier.py`** - LLM-based intelligent task routing
-- **`task_graph.py`** - Dependency management and parallel execution
-- **`orchestrator.py`** - Main coordinator that orchestrates the workflow
-- **`main.py`** - Beautiful CLI interface with progress indicators
-
-## 🔧 Adding Your Own Agent
-
-Create a new agent by inheriting from `HuggingFaceAgent` or `BaseAgent`:
-
-```python
-from agent import HuggingFaceAgent, AgentCapability, ModelConfig, ModelType
-
-class MyCustomAgent(HuggingFaceAgent):
-    def __init__(self):
-        config = ModelConfig(
-            model_name="your-model/name",
-            model_type=ModelType.CAUSAL_LM,
-            max_length=512,
-            temperature=0.7
-        )
-        super().__init__(
-            "my_agent",
-            "My Custom Agent",
-            [AgentCapability.ANALYSIS],
-            config,
-            "Description of what this agent does and when to use it"
-        )
-```
-
-Then register it:
-```python
-registry.register(MyCustomAgent())
-```
-
-The agent automatically appears in the classifier's knowledge - no configuration needed!
-
-## 📋 Requirements
-
-- Python 3.8+
-- `transformers` - Hugging Face model library
-- `torch` - PyTorch for model execution
-- `accelerate` - Efficient model loading
-- `rich` - Beautiful terminal output
-
-See `requirements.txt` for full list.
-
-## 🎨 What You See
-
-When you run a task, you'll see:
+This opens an interactive shell where you can:
+- Run orchestrated tasks by typing them
+- Execute shell commands directly with `!` prefix
+- Check workspace status with `@` commands
 
 ```
-📝 Task: Generate a Python function to sort a list
+my-project > Create a Python Flask API with user authentication
 
-🔍 Analyzing task and selecting appropriate agents...
-✓ Identified 1 task(s) to execute
-💭 [Reasoning from LLM about why coding_agent was selected]
-📋 Building task execution plan...
-⚙️ Level 1/1: Executing 1 task(s)...
-⚙️ Using Coding Agent for: Generate a Python function...
-✓ Coding Agent completed task
-📊 Aggregating results...
-✅ Task completed
+🔍 Analyzing task and creating execution plan...
+📋 Created 4 tasks
 
-✅ Task Completed Successfully
+📋 Task Graph
+├── Level 1
+│   ├── ● task_1: Create project directory and initialize Flask app
+├── Level 2
+│   ├── ◑ task_2: Install Flask and dependencies
+│   ├── ◑ task_3: Create user model and database setup
+├── Level 3
+│   └── ○ task_4: Create authentication routes and middleware
 
-🤖 Agents Used:
-  ✓ Coding Agent
+✓ task_1 completed
+✓ task_2 completed
+✓ task_3 completed  
+✓ task_4 completed
 
-📄 Result:
-[Generated code displayed here]
+✅ All tasks completed successfully!
+
+my-project > !ls -la
+total 24
+drwxr-xr-x  5 user  staff   160 Jan 18 10:30 .
+-rw-r--r--  1 user  staff   245 Jan 18 10:30 app.py
+-rw-r--r--  1 user  staff   512 Jan 18 10:30 models.py
+-rw-r--r--  1 user  staff   128 Jan 18 10:30 requirements.txt
+
+my-project > @status
+╭─────────────────────────────────────────────╮
+│ Status                                      │
+│ 📁 Working Directory: /home/user/my-project │
+│                                             │
+│ 📄 Recent Files:                            │
+│    • app.py                                 │
+│    • models.py                              │
+│    • requirements.txt                       │
+│                                             │
+│ 📊 Tasks: 4/4 completed                     │
+╰─────────────────────────────────────────────╯
 ```
 
-## 🔍 How Task Routing Works
-
-The system uses an LLM (GPT-2 by default) that:
-
-1. **Knows all agents** - Receives information about every registered agent
-2. **Understands specializations** - Each agent provides its own description
-3. **Reasons about tasks** - Analyzes your task and determines the best agent(s)
-4. **Provides reasoning** - Explains why it selected specific agents
-
-No keywords, no hardcoded rules - pure LLM reasoning based on agent descriptions.
-
-## 🛠️ Advanced Usage
-
-### Custom Model Configuration
-
-```python
-from agent import CodingAgent, ModelConfig, ModelType
-
-# Use a different model
-agent = CodingAgent(model_preset="code", max_length=2048, temperature=0.2)
-```
-
-### List Available Agents
+### Single Task Mode
 
 ```bash
-python main.py --list-agents
+python main.py "Create a React todo app with local storage"
 ```
 
-### Adjust Parallelism
+### Shell Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `!<cmd>` | Run shell command directly (e.g., `!ls -la`) |
+| `@status` | Show workspace status (files, agents, tasks) |
+| `@files` | List all files in workspace |
+| `@dirs` | List all directories |
+| `@history` | Show recent agent activities |
+| `@context` | Show full workspace context |
+| `@clear` | Clear the screen |
+| `help` | Show example tasks |
+| `exit` | Exit the shell |
+
+### Command Line Options
 
 ```bash
-python main.py "Your task" --max-parallel 5
+python main.py --help
+
+Options:
+  -i, --interactive         Interactive shell mode
+  -w, --workspace DIR       Working directory for agents
+  -m, --model MODEL         HuggingFace model name
+  --device {auto,cuda,mps,cpu}  Device to run on
+  -p, --parallel N          Max parallel agents (default: 3)
+  --no-quantize             Disable 4-bit quantization
+  -v, --verbose             Enable verbose output
+  --continue-on-failure     Continue even if tasks fail
 ```
 
-## 📝 Project Structure
+### Examples
+
+```bash
+# Start in specific directory
+python main.py -w ./my-new-project
+
+# Use coding-optimized model
+python main.py -m "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+# More parallel agents
+python main.py -p 5 "Build a microservices architecture"
+
+# Continue even if some tasks fail
+python main.py --continue-on-failure "Set up CI/CD pipeline"
+```
+
+## Project Structure
 
 ```
 CounselOfAgents/
-├── agent.py              # Agent framework & implementations
-├── agent_registry.py     # Agent discovery & management
-├── task_classifier.py    # LLM-based task routing
-├── task_graph.py         # Dependency & execution management
-├── orchestrator.py         # Main workflow coordinator
-├── main.py               # CLI interface
-├── setup.py              # Installation script
-├── requirements.txt      # Dependencies
-└── README.md            # This file
+├── main.py              # CLI with interactive shell
+├── orchestrator.py      # Task planning and coordination
+├── agent.py             # Worker agents with shell access
+├── task_graph.py        # DAG for task dependencies
+├── workspace.py         # Shared state for coordination
+├── llm.py               # HuggingFace LLM interface
+├── shell.py             # Safe shell execution
+├── config.py            # Configuration management
+└── requirements.txt     # Dependencies
 ```
 
-## 🤝 Contributing
+## Configuration
 
-To add a new agent:
+### Environment Variables
 
-1. Create a class inheriting from `HuggingFaceAgent` or `BaseAgent`
-2. Provide a clear description of what it does
-3. Register it in your code
-4. That's it! The system automatically discovers and uses it.
+```bash
+export AGENT_LLM_MODEL="Qwen/Qwen2.5-7B-Instruct"
+export AGENT_LLM_DEVICE="cuda"
+export AGENT_MAX_PARALLEL=5
+export AGENT_VERBOSE=1
+```
 
-## 📄 License
+### Recommended Models
 
-Open source - modify and extend as needed.
+| Model | Size | Memory | Best For |
+|-------|------|--------|----------|
+| `Qwen/Qwen2.5-1.5B-Instruct` | 1.5B | ~4GB | Simple tasks, testing |
+| `Qwen/Qwen2.5-7B-Instruct` | 7B | ~8GB | General use (default) |
+| `Qwen/Qwen2.5-Coder-7B-Instruct` | 7B | ~8GB | Code-heavy tasks |
+| `Qwen/Qwen2.5-14B-Instruct` | 14B | ~12GB | Complex reasoning |
 
----
+## Safety Features
 
-**Ready to use?** Just run `agent` and start describing what you need! 🚀
+- **Blocked Commands**: Dangerous patterns like `rm -rf /` are blocked
+- **No Sudo**: Sudo disabled by default
+- **Timeouts**: Commands timeout after 120 seconds
+- **Output Limits**: Large outputs are truncated
+
+## How It Works
+
+1. **User Request** → "Build a REST API with Express"
+
+2. **Planning Phase** → Orchestrator uses LLM to decompose:
+   ```
+   task_1: Create directory and npm init
+   task_2: Install express (depends on task_1)
+   task_3: Create routes (depends on task_2)
+   task_4: Add error handling (depends on task_3)
+   ```
+
+3. **Execution Phase** → Agents execute in parallel where possible:
+   ```
+   Level 1: [task_1] ────────────────►
+   Level 2:          [task_2] ───────►
+   Level 3:                   [task_3]
+   Level 4:                            [task_4]
+   ```
+
+4. **Coordination** → Via shared workspace:
+   - Agent 1 creates files → Workspace tracks them
+   - Agent 2 starts → Sees Agent 1's files in context
+   - Agent 3 starts → Sees both agents' work
+
+5. **Results** → Aggregated and displayed
+
+## Requirements
+
+- Python 3.10+
+- ~8GB RAM (with 4-bit quantization)
+- CUDA GPU recommended (works on CPU/MPS too)
+
+## License
+
+MIT License

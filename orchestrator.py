@@ -1,312 +1,441 @@
-"""Orchestrator agent for coordinating multiple specialized agents."""
+"""Orchestrator agent for planning and coordinating task execution."""
 
 import asyncio
-from typing import List, Dict, Any, Optional
-from agent import BaseAgent, Task, AgentResult, AgentCapability
-from agent_registry import AgentRegistry
-from task_graph import TaskGraph
-from task_classifier import TaskClassifier
+import json
+import re
+from typing import Optional, Dict, Any, Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from config import Config, ExecutionConfig, get_config
+from llm import LLM, Message, get_llm
+from task_graph import TaskGraph, Task, TaskStatus
+from agent import AgentPool, AgentResult
+from workspace import Workspace, get_workspace
+
+
+PLANNING_SYSTEM_PROMPT = """You are an expert task planner for a multi-agent system. Your job is to break down complex tasks into smaller, executable subtasks with proper dependencies.
+
+## Your Role
+
+Given a high-level task, you must:
+1. Analyze what needs to be done
+2. Break it down into atomic subtasks that can be executed independently
+3. Identify dependencies between subtasks
+4. Output a structured task graph
+
+## Workspace Context
+
+{workspace_context}
+
+## Output Format
+
+You MUST respond with a valid JSON object in this exact format:
+
+```json
+{{
+  "analysis": "Brief analysis of the task",
+  "tasks": [
+    {{
+      "id": "task_1",
+      "description": "Clear description of what this subtask should accomplish",
+      "dependencies": []
+    }},
+    {{
+      "id": "task_2", 
+      "description": "Another subtask description",
+      "dependencies": ["task_1"]
+    }}
+  ]
+}}
+```
+
+## Rules for Task Decomposition
+
+1. **Atomic Tasks**: Each task should be completable by a single agent with shell access
+2. **Clear Descriptions**: Each description should be specific and actionable
+3. **Proper Dependencies**: A task should only depend on tasks whose output it needs
+4. **Parallel When Possible**: Independent tasks should NOT have false dependencies
+5. **Use Existing Files**: Reference existing files/directories from workspace context
+6. **Coordinate Work**: If multiple tasks work in same area, set up proper dependencies
+
+## Examples
+
+Task: "Create a Python project with a hello world script"
+```json
+{{
+  "analysis": "Need to create directory structure and a simple Python file",
+  "tasks": [
+    {{
+      "id": "task_1",
+      "description": "Create a new directory called 'hello_project' for the Python project",
+      "dependencies": []
+    }},
+    {{
+      "id": "task_2",
+      "description": "Create a file called 'hello.py' inside hello_project with a hello world program that prints 'Hello, World!'",
+      "dependencies": ["task_1"]
+    }}
+  ]
+}}
+```
+
+Task: "Set up a basic Express.js server with a health endpoint"
+```json
+{{
+  "analysis": "Need to initialize npm, install express, and create server file",
+  "tasks": [
+    {{
+      "id": "task_1",
+      "description": "Create a new directory called 'express-server' and initialize it with npm init -y",
+      "dependencies": []
+    }},
+    {{
+      "id": "task_2",
+      "description": "Install express package using npm install express",
+      "dependencies": ["task_1"]
+    }},
+    {{
+      "id": "task_3",
+      "description": "Create index.js with an Express server that listens on port 3000 and has a GET /health endpoint returning {{status: 'ok'}}",
+      "dependencies": ["task_2"]
+    }}
+  ]
+}}
+```
+
+Now analyze and plan the following task:"""
+
+
+@dataclass
+class ExecutionResult:
+    """Result of executing a task graph."""
+    success: bool
+    task_graph: TaskGraph
+    results: Dict[str, AgentResult] = field(default_factory=dict)
+    error: Optional[str] = None
+    started_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    completed_at: Optional[str] = None
+    
+    def to_dict(self) -> Dict:
+        return {
+            "success": self.success,
+            "task_graph": self.task_graph.to_dict(),
+            "results": {k: v.to_dict() for k, v in self.results.items()},
+            "error": self.error,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at
+        }
+    
+    def get_summary(self) -> str:
+        """Get a human-readable summary."""
+        graph_summary = self.task_graph.get_summary()
+        
+        lines = [
+            "=" * 50,
+            "Execution Summary",
+            "=" * 50,
+            f"Status: {'Success' if self.success else 'Failed'}",
+            f"Total tasks: {len(self.task_graph)}",
+            f"  Completed: {graph_summary['completed']}",
+            f"  Failed: {graph_summary['failed']}",
+            f"  Blocked: {graph_summary['blocked']}",
+        ]
+        
+        if self.error:
+            lines.append(f"Error: {self.error}")
+        
+        lines.append("\nTask Results:")
+        for task_id, result in self.results.items():
+            status = "✓" if result.success else "✗"
+            lines.append(f"  {status} {task_id}: {result.result or result.error}")
+        
+        return "\n".join(lines)
+    
+    def get_files_created(self) -> list[str]:
+        """Get all files created during execution."""
+        files = []
+        for result in self.results.values():
+            files.extend(result.files_created)
+        return files
 
 
 class Orchestrator:
-    """Main orchestrator that coordinates agent execution."""
+    """
+    Main orchestrator that plans and coordinates task execution.
     
-    def __init__(self, agent_registry: AgentRegistry, progress_callback=None, user_input_callback=None):
+    The orchestrator:
+    1. Takes a high-level user request
+    2. Uses LLM to decompose it into a task graph
+    3. Manages a shared workspace for agent coordination
+    4. Executes tasks respecting dependencies
+    5. Enables parallel execution where possible
+    6. Aggregates and returns results
+    """
+    
+    def __init__(
+        self,
+        config: Optional[Config] = None,
+        llm: Optional[LLM] = None,
+        workspace: Optional[Workspace] = None,
+        progress_callback: Optional[Callable[[str, str], None]] = None
+    ):
         """
         Initialize the orchestrator.
         
         Args:
-            agent_registry: Registry containing all available agents
-            progress_callback: Optional callback function(status, message) for progress updates
-            user_input_callback: Optional callback function(question: str) -> str for getting user input
+            config: Configuration object
+            llm: LLM instance (will create one if not provided)
+            workspace: Shared workspace (will create one if not provided)
+            progress_callback: Optional callback(status, message) for progress updates
         """
-        self.registry = agent_registry
-        self.classifier = TaskClassifier(agent_registry=agent_registry)
-        self.task_graph = TaskGraph()
-        self.execution_results: Dict[str, AgentResult] = {}
+        self.config = config or get_config()
+        self.llm = llm or get_llm(self.config.llm)
+        self.workspace = workspace or get_workspace()
         self.progress_callback = progress_callback
-        self.user_input_callback = user_input_callback
+        self._current_graph: Optional[TaskGraph] = None
     
-    def _update_progress(self, status: str, message: str):
-        """Update progress if callback is provided."""
+    def _update_progress(self, status: str, message: str) -> None:
+        """Send a progress update if callback is registered."""
         if self.progress_callback:
             self.progress_callback(status, message)
     
-    async def process_prompt(
-        self,
-        prompt: str,
-        max_parallel: int = 5
-    ) -> Dict[str, Any]:
+    def _parse_task_graph(self, response: str) -> TaskGraph:
+        """Parse LLM response into a TaskGraph."""
+        # Try to extract JSON from response
+        json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_match = re.search(r"\{.*\}", response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                raise ValueError("No JSON found in response")
+        
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}")
+        
+        if "tasks" not in data:
+            raise ValueError("Response missing 'tasks' field")
+        
+        graph = TaskGraph()
+        
+        for task_data in data["tasks"]:
+            if not isinstance(task_data, dict):
+                continue
+            
+            task_id = task_data.get("id", f"task_{len(graph) + 1}")
+            description = task_data.get("description", "")
+            dependencies = task_data.get("dependencies", [])
+            
+            if not description:
+                continue
+            
+            graph.add_task(
+                task_id=task_id,
+                description=description,
+                dependencies=dependencies,
+                metadata={"raw": task_data}
+            )
+        
+        return graph
+    
+    async def plan(self, user_request: str) -> TaskGraph:
         """
-        Process a user prompt by orchestrating multiple agents.
+        Plan the execution by decomposing the user request into tasks.
         
         Args:
-            prompt: The user's prompt/task
-            max_parallel: Maximum number of tasks to run in parallel
+            user_request: The high-level task from the user
             
         Returns:
-            Dictionary containing results and metadata
+            TaskGraph with the planned tasks
         """
-        # Step 1: Classify the prompt and create tasks
-        self._update_progress("classifying", "Analyzing task and selecting appropriate agents...")
-        tasks = await self.classifier.create_tasks_from_prompt_async(prompt)
-        self._update_progress("classified", f"Identified {len(tasks)} task(s) to execute")
+        self._update_progress("planning", "Analyzing task and creating execution plan...")
         
-        # Show classification reasoning
-        if tasks and tasks[0].metadata.get("classification_reasoning"):
-            self._update_progress("reasoning", tasks[0].metadata.get("classification_reasoning", ""))
+        # Get current workspace context
+        workspace_context = self.workspace.get_context_for_agent()
         
-        # Step 2: Build task graph
-        self._update_progress("building", "Building task execution plan...")
-        self.task_graph = TaskGraph()
-        for task in tasks:
-            self.task_graph.add_task(task)
+        # Build planning prompt
+        system_prompt = PLANNING_SYSTEM_PROMPT.format(workspace_context=workspace_context)
         
-        # Step 3: Validate graph
-        if self.task_graph.has_cycles():
-            self._update_progress("error", "Task graph contains cycles")
-            return {
-                "success": False,
-                "error": "Task graph contains cycles",
-                "results": {}
-            }
-        
-        # Notify that graph is ready for visualization
-        self._update_progress("graph_ready", "Task graph created")
-        
-        # Step 4: Execute tasks
-        try:
-            execution_order = self.task_graph.get_execution_order()
-        except ValueError as e:
-            self._update_progress("error", f"Task graph error: {str(e)}")
-            return {
-                "success": False,
-                "error": f"Task graph error: {str(e)}",
-                "results": {}
-            }
-        
-        total_levels = len(execution_order)
-        self._update_progress("executing", f"Executing {total_levels} level(s) of tasks...")
-        await self._execute_tasks(max_parallel)
-        
-        # Step 5: Aggregate results
-        self._update_progress("aggregating", "Aggregating results...")
-        results = self._aggregate_results()
-        self._update_progress("complete", "Task completed")
-        
-        return {
-            "success": self.task_graph.is_complete(),
-            "prompt": prompt,
-            "tasks_created": len(tasks),
-            "results": results,
-            "task_status": {
-                task.id: task.status
-                for task in self.task_graph.get_all_tasks()
-            }
-        }
-    
-    async def _execute_tasks(self, max_parallel: int) -> None:
-        """Execute tasks respecting dependencies and parallelism."""
-        execution_order = self.task_graph.get_execution_order()
-        
-        for level_idx, level in enumerate(execution_order, 1):
-            # Execute tasks in this level in parallel (up to max_parallel)
-            tasks_to_execute = [
-                self.task_graph.get_task(task_id)
-                for task_id in level
-            ]
-            
-            self._update_progress("executing", f"Level {level_idx}/{len(execution_order)}: Executing {len(tasks_to_execute)} task(s)...")
-            
-            # Process in batches to respect max_parallel
-            for i in range(0, len(tasks_to_execute), max_parallel):
-                batch = tasks_to_execute[i:i + max_parallel]
-                await asyncio.gather(*[
-                    self._execute_single_task(task)
-                    for task in batch
-                ])
-    
-    async def _execute_single_task(self, task: Task) -> None:
-        """Execute a single task by finding and using an appropriate agent."""
-        # Check if task metadata has recommended agents from the classifier
-        recommended_agents = task.metadata.get("recommended_agents", []) if task.metadata else []
-        
-        # Find agents that can handle this task
-        available_agents = self.registry.find_agents_for_task(task)
-        
-        if not available_agents:
-            # No agent available, mark as failed
-            self.task_graph.mark_failed(task.id)
-            self.execution_results[task.id] = AgentResult(
-                task_id=task.id,
-                agent_id="none",
-                result=None,
-                success=False,
-                error=f"No agent available for task: {task.description}"
-            )
-            return
-        
-        # Prefer recommended agents if available (from LLM classification)
-        selected_agent = None
-        if recommended_agents:
-            for agent_id in recommended_agents:
-                agent = self.registry.get_agent(agent_id)
-                if agent and agent in available_agents:
-                    selected_agent = agent
-                    break
-        
-        # Fallback to first available agent if no recommendation or recommended not available
-        if not selected_agent:
-            selected_agent = available_agents[0]
-        
-        # Mark task as in progress
-        self.task_graph.mark_in_progress(task.id)
-        self._update_progress("executing", f"Using {selected_agent.name} for: {task.description[:50]}...")
-        
-        try:
-            # Execute the task
-            result = await selected_agent.execute(task)
-            
-            # Check if agent needs user input
-            if result.needs_user_input and result.question:
-                if not self.user_input_callback:
-                    # No callback provided, mark as failed
-                    self.task_graph.mark_failed(task.id)
-                    self.execution_results[task.id] = AgentResult(
-                        task_id=task.id,
-                        agent_id=selected_agent.agent_id,
-                        result=None,
-                        success=False,
-                        error="Agent requested user input but no user_input_callback provided"
-                    )
-                    self._update_progress("error", f"✗ {selected_agent.name} needs user input but callback not available")
-                    return
-                
-                # Get user input
-                self._update_progress("user_input", f"{selected_agent.name} is asking a question...")
-                user_response = self.user_input_callback(result.question)
-                
-                if user_response is None:
-                    # User cancelled or no response
-                    self.task_graph.mark_failed(task.id)
-                    self.execution_results[task.id] = AgentResult(
-                        task_id=task.id,
-                        agent_id=selected_agent.agent_id,
-                        result=None,
-                        success=False,
-                        error="User input was cancelled or not provided"
-                    )
-                    self._update_progress("error", f"✗ User input cancelled for {selected_agent.name}")
-                    return
-                
-                # Update task with user's response and re-execute
-                # Add user response to task metadata and update description
-                if task.metadata is None:
-                    task.metadata = {}
-                
-                # Store original description if not already stored
-                if "original_description" not in task.metadata:
-                    task.metadata["original_description"] = task.description
-                
-                # Append user response to metadata (support multiple questions)
-                if "user_responses" not in task.metadata:
-                    task.metadata["user_responses"] = []
-                task.metadata["user_responses"].append(user_response)
-                task.metadata["user_response"] = user_response  # Keep latest for backward compatibility
-                
-                # Update task description to include user's response
-                # Use original description to avoid appending multiple times
-                original_desc = task.metadata.get("original_description", task.description)
-                all_responses = "\n\n".join([f"User Response: {r}" for r in task.metadata["user_responses"]])
-                task.description = f"{original_desc}\n\n{all_responses}"
-                
-                # Re-execute the agent with user's input
-                self._update_progress("executing", f"{selected_agent.name} continuing with your response...")
-                result = await selected_agent.execute(task)
-            
-            self.execution_results[task.id] = result
-            
-            if result.success:
-                task.result = result.result
-                self.task_graph.mark_completed(task.id)
-                self._update_progress("success", f"✓ {selected_agent.name} completed task")
-                # Notify graph update
-                self._update_progress("graph_update", f"Task {task.id} completed")
-            else:
-                self.task_graph.mark_failed(task.id)
-                self._update_progress("error", f"✗ {selected_agent.name} failed: {result.error}")
-                # Notify graph update
-                self._update_progress("graph_update", f"Task {task.id} failed")
-        except Exception as e:
-            # Handle execution errors
-            self.task_graph.mark_failed(task.id)
-            self.execution_results[task.id] = AgentResult(
-                task_id=task.id,
-                agent_id=selected_agent.agent_id,
-                result=None,
-                success=False,
-                error=str(e)
-            )
-    
-    def _aggregate_results(self) -> Dict[str, Any]:
-        """Aggregate results from all completed tasks."""
-        aggregated = {
-            "task_results": {},
-            "final_output": None,
-            "summary": {
-                "total_tasks": len(self.task_graph.get_all_tasks()),
-                "completed": sum(1 for t in self.task_graph.get_all_tasks() if t.status == "completed"),
-                "failed": sum(1 for t in self.task_graph.get_all_tasks() if t.status == "failed")
-            }
-        }
-        
-        # Collect individual task results
-        for task_id, result in self.execution_results.items():
-            aggregated["task_results"][task_id] = {
-                "agent_id": result.agent_id,
-                "result": result.result,
-                "success": result.success,
-                "error": result.error,
-                "metadata": result.metadata
-            }
-        
-        # Create final output from completed tasks
-        completed_results = [
-            result.result
-            for result in self.execution_results.values()
-            if result.success
+        messages = [
+            Message(role="system", content=system_prompt),
+            Message(role="user", content=f"Task: {user_request}")
         ]
         
-        if completed_results:
-            # Simple aggregation: combine all results
-            if len(completed_results) == 1:
-                aggregated["final_output"] = completed_results[0]
-            else:
-                aggregated["final_output"] = "\n\n".join(str(r) for r in completed_results)
+        # Get planning response
+        response = await self.llm.chat(messages)
         
-        return aggregated
+        # Parse into task graph
+        try:
+            graph = self._parse_task_graph(response)
+        except ValueError as e:
+            self._update_progress("planning", "Refining plan...")
+            
+            messages.append(Message(role="assistant", content=response))
+            messages.append(Message(
+                role="user",
+                content="Please provide the task breakdown as valid JSON with 'tasks' array. Each task needs 'id', 'description', and 'dependencies' fields."
+            ))
+            
+            response = await self.llm.chat(messages)
+            graph = self._parse_task_graph(response)
+        
+        # Finalize the graph
+        graph.finalize()
+        
+        self._current_graph = graph
+        self._update_progress("planned", f"Created {len(graph)} tasks")
+        
+        # Log planning activity
+        self.workspace.log_activity(
+            "orchestrator", "", "planned",
+            f"Created {len(graph)} tasks for: {user_request[:50]}"
+        )
+        
+        return graph
     
-    def add_task(self, task: Task) -> None:
-        """Manually add a task to the graph."""
-        self.task_graph.add_task(task)
+    async def execute(
+        self,
+        graph: Optional[TaskGraph] = None,
+        continue_on_failure: Optional[bool] = None
+    ) -> ExecutionResult:
+        """
+        Execute a task graph with parallel agent coordination.
+        
+        Args:
+            graph: TaskGraph to execute (uses current if not provided)
+            continue_on_failure: Whether to continue if a task fails
+            
+        Returns:
+            ExecutionResult with all task outcomes
+        """
+        graph = graph or self._current_graph
+        if not graph:
+            raise ValueError("No task graph to execute")
+        
+        continue_on_failure = (
+            continue_on_failure 
+            if continue_on_failure is not None 
+            else self.config.execution.continue_on_failure
+        )
+        
+        result = ExecutionResult(success=False, task_graph=graph)
+        
+        # Create agent pool with shared workspace
+        pool = AgentPool(
+            max_agents=self.config.execution.max_parallel_agents,
+            llm=self.llm,
+            workspace=self.workspace
+        )
+        
+        self._update_progress("executing", "Starting task execution...")
+        
+        # Store results for context passing
+        completed_results: Dict[str, Any] = {}
+        
+        # Execute until complete
+        while not graph.is_complete():
+            ready_tasks = graph.get_ready_tasks()
+            
+            if not ready_tasks:
+                if not any(t.status == TaskStatus.RUNNING for t in graph.tasks.values()):
+                    break
+                await asyncio.sleep(0.1)
+                continue
+            
+            self._update_progress(
+                "executing",
+                f"Running {len(ready_tasks)} task(s) in parallel..."
+            )
+            
+            # Mark tasks as running
+            for task in ready_tasks:
+                graph.mark_running(task.id)
+            
+            # Build context for each task from dependencies
+            contexts: Dict[str, Dict[str, Any]] = {}
+            for task in ready_tasks:
+                task_context = {}
+                for dep_id in task.dependencies:
+                    if dep_id in completed_results:
+                        task_context[dep_id] = completed_results[dep_id]
+                contexts[task.id] = task_context
+            
+            # Execute tasks in parallel
+            task_results = await pool.execute_tasks(ready_tasks, contexts)
+            
+            # Process results
+            for task_id, agent_result in task_results.items():
+                result.results[task_id] = agent_result
+                
+                if agent_result.success:
+                    graph.mark_completed(task_id, agent_result.result)
+                    completed_results[task_id] = agent_result.result
+                    self._update_progress("task_done", f"✓ {task_id} completed")
+                    
+                    # Store result in workspace for other tasks
+                    self.workspace.set_variable(f"result_{task_id}", agent_result.result)
+                else:
+                    graph.mark_failed(task_id, agent_result.error or "Unknown error")
+                    self._update_progress("task_failed", f"✗ {task_id} failed: {agent_result.error}")
+                    
+                    if not continue_on_failure:
+                        result.error = f"Task {task_id} failed: {agent_result.error}"
+                        result.completed_at = datetime.now().isoformat()
+                        return result
+            
+            # Save state if persistence enabled
+            if self.config.execution.persist_state:
+                graph.save(self.config.execution.state_file)
+        
+        # Final status
+        result.success = graph.is_successful()
+        result.completed_at = datetime.now().isoformat()
+        
+        if result.success:
+            self._update_progress("complete", "All tasks completed successfully")
+        else:
+            failed = graph.get_summary()["failed"]
+            blocked = graph.get_summary()["blocked"]
+            self._update_progress("complete", f"Finished with {failed} failed, {blocked} blocked")
+        
+        return result
     
-    def get_task_graph_info(self) -> Dict[str, Any]:
-        """Get information about the current task graph."""
-        return {
-            "total_tasks": len(self.task_graph.get_all_tasks()),
-            "execution_order": self.task_graph.get_execution_order(),
-            "tasks": [
-                {
-                    "id": task.id,
-                    "description": task.description,
-                    "status": task.status,
-                    "capabilities": [cap.value for cap in task.required_capabilities],
-                    "dependencies": task.dependencies
-                }
-                for task in self.task_graph.get_all_tasks()
-            ]
-        }
+    async def run(self, user_request: str) -> ExecutionResult:
+        """
+        Plan and execute a user request in one call.
+        
+        Args:
+            user_request: The high-level task from the user
+            
+        Returns:
+            ExecutionResult with all outcomes
+        """
+        graph = await self.plan(user_request)
+        self._update_progress("graph", graph.visualize())
+        return await self.execute(graph)
     
-    def get_graph_visualization(self):
-        """Get the visual representation of the task graph."""
-        return self.task_graph.get_visualization()
+    def get_current_graph(self) -> Optional[TaskGraph]:
+        """Get the current task graph."""
+        return self._current_graph
+    
+    def get_workspace(self) -> Workspace:
+        """Get the shared workspace."""
+        return self.workspace
+    
+    def visualize(self) -> str:
+        """Get visualization of current graph."""
+        if self._current_graph:
+            return self._current_graph.visualize()
+        return "No task graph"
+
+
+# Convenience function
+async def run_task(user_request: str, config: Optional[Config] = None) -> ExecutionResult:
+    """Run a task from start to finish."""
+    orchestrator = Orchestrator(config=config)
+    return await orchestrator.run(user_request)
