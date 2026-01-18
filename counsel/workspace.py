@@ -13,7 +13,7 @@ from pathlib import Path
 class FileInfo:
     """Information about a file in the workspace."""
     path: str
-    created_by: Optional[str] = None  # agent_id
+    created_by: Optional[str] = None
     modified_by: Optional[str] = None
     created_at: Optional[str] = None
     modified_at: Optional[str] = None
@@ -35,7 +35,7 @@ class AgentActivity:
     """Record of an agent's activity."""
     agent_id: str
     task_id: str
-    action: str  # "started", "created_file", "ran_command", "completed", "failed"
+    action: str
     details: str
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     
@@ -86,11 +86,10 @@ class Workspace:
         self._directories: Set[str] = {self._root_dir}
         self._activities: List[AgentActivity] = []
         self._variables: Dict[str, Any] = {}
-        self._active_agents: Dict[str, str] = {}  # agent_id -> current task description
+        self._active_agents: Dict[str, str] = {}
         self._lock = threading.RLock()
         self._initialized = True
         
-        # Scan existing files in root
         self._scan_directory(self._root_dir)
     
     def _scan_directory(self, path: str, max_depth: int = 3) -> None:
@@ -100,7 +99,6 @@ class Workspace:
                 full_path = os.path.join(path, item)
                 rel_path = os.path.relpath(full_path, self._root_dir)
                 
-                # Skip hidden files and common ignore patterns
                 if item.startswith('.') or item in ('node_modules', '__pycache__', 'venv', '.git'):
                     continue
                 
@@ -117,17 +115,14 @@ class Workspace:
     
     @property
     def root_dir(self) -> str:
-        """Get the workspace root directory."""
         return self._root_dir
     
     @property
     def cwd(self) -> str:
-        """Get current working directory."""
         with self._lock:
             return self._cwd
     
     def set_cwd(self, path: str) -> None:
-        """Set current working directory."""
         with self._lock:
             if os.path.isabs(path):
                 self._cwd = path
@@ -142,9 +137,7 @@ class Workspace:
         description: Optional[str] = None,
         is_modification: bool = False
     ) -> None:
-        """Register a file creation or modification."""
         with self._lock:
-            # Normalize path
             if os.path.isabs(path):
                 rel_path = os.path.relpath(path, self._root_dir)
             else:
@@ -163,13 +156,11 @@ class Workspace:
                     description=description
                 )
             
-            # Register parent directory
             parent = os.path.dirname(rel_path)
             if parent:
                 self._directories.add(parent)
     
     def register_directory(self, path: str, agent_id: Optional[str] = None) -> None:
-        """Register a directory creation."""
         with self._lock:
             if os.path.isabs(path):
                 rel_path = os.path.relpath(path, self._root_dir)
@@ -179,16 +170,9 @@ class Workspace:
             self._directories.add(rel_path)
             
             if agent_id:
-                self.log_activity(agent_id, "", "created_directory", f"Created directory: {rel_path}")
+                self.log_activity(agent_id, "", "created_directory", f"Created: {rel_path}")
     
-    def log_activity(
-        self,
-        agent_id: str,
-        task_id: str,
-        action: str,
-        details: str
-    ) -> None:
-        """Log an agent activity."""
+    def log_activity(self, agent_id: str, task_id: str, action: str, details: str) -> None:
         with self._lock:
             activity = AgentActivity(
                 agent_id=agent_id,
@@ -198,114 +182,72 @@ class Workspace:
             )
             self._activities.append(activity)
             
-            # Keep only last 100 activities
             if len(self._activities) > 100:
                 self._activities = self._activities[-100:]
     
     def set_agent_active(self, agent_id: str, task_description: str) -> None:
-        """Mark an agent as actively working on a task."""
         with self._lock:
             self._active_agents[agent_id] = task_description
     
     def set_agent_inactive(self, agent_id: str) -> None:
-        """Mark an agent as no longer active."""
         with self._lock:
             self._active_agents.pop(agent_id, None)
     
     def get_active_agents(self) -> Dict[str, str]:
-        """Get currently active agents and their tasks."""
         with self._lock:
             return dict(self._active_agents)
     
     def set_variable(self, key: str, value: Any) -> None:
-        """Set a shared variable."""
         with self._lock:
             self._variables[key] = value
     
     def get_variable(self, key: str, default: Any = None) -> Any:
-        """Get a shared variable."""
         with self._lock:
             return self._variables.get(key, default)
     
     def get_files(self) -> List[str]:
-        """Get list of all known files."""
         with self._lock:
             return list(self._files.keys())
     
     def get_directories(self) -> List[str]:
-        """Get list of all known directories."""
         with self._lock:
             return sorted(self._directories)
     
     def get_recent_activities(self, limit: int = 20) -> List[AgentActivity]:
-        """Get recent activities."""
         with self._lock:
             return self._activities[-limit:]
     
-    def get_project_structure(self) -> str:
-        """Get a formatted project structure."""
-        with self._lock:
-            lines = [f"Project Root: {self._root_dir}", ""]
-            
-            # Group files by directory
-            dirs: Dict[str, List[str]] = {}
-            for file_path in sorted(self._files.keys()):
-                dir_name = os.path.dirname(file_path) or "."
-                if dir_name not in dirs:
-                    dirs[dir_name] = []
-                dirs[dir_name].append(os.path.basename(file_path))
-            
-            for dir_name in sorted(dirs.keys()):
-                lines.append(f"📁 {dir_name}/")
-                for file_name in sorted(dirs[dir_name]):
-                    lines.append(f"   📄 {file_name}")
-            
-            return "\n".join(lines)
-    
     def get_context_for_agent(self, task_id: str = "") -> str:
-        """
-        Get a context summary for an agent.
-        
-        This provides the agent with awareness of:
-        - Current project structure
-        - What other agents are working on
-        - Recent activities
-        - Important shared variables
-        """
+        """Get a context summary for an agent."""
         with self._lock:
             parts = []
             
-            # Project structure
             parts.append("## Project Structure")
             parts.append(f"Root: {self._root_dir}")
             parts.append(f"Current directory: {self._cwd}")
             parts.append("")
             
-            # Files
             if self._files:
                 parts.append("### Files in workspace:")
-                for path, info in sorted(self._files.items())[:30]:  # Limit to 30 files
+                for path, info in sorted(self._files.items())[:30]:
                     creator = f" (by {info.created_by})" if info.created_by else ""
                     parts.append(f"  - {path}{creator}")
                 if len(self._files) > 30:
                     parts.append(f"  ... and {len(self._files) - 30} more files")
                 parts.append("")
             
-            # Directories
             if self._directories:
                 parts.append("### Directories:")
                 for dir_path in sorted(self._directories)[:20]:
                     parts.append(f"  - {dir_path}/")
                 parts.append("")
             
-            # Active agents
             if self._active_agents:
                 parts.append("### Other agents currently working:")
                 for agent_id, task_desc in self._active_agents.items():
                     parts.append(f"  - {agent_id}: {task_desc[:60]}...")
                 parts.append("")
             
-            # Recent activities
             recent = self._activities[-10:]
             if recent:
                 parts.append("### Recent activities:")
@@ -313,7 +255,6 @@ class Workspace:
                     parts.append(f"  - [{activity.agent_id}] {activity.action}: {activity.details[:50]}")
                 parts.append("")
             
-            # Shared variables
             if self._variables:
                 parts.append("### Shared context:")
                 for key, value in self._variables.items():
@@ -324,7 +265,6 @@ class Workspace:
             return "\n".join(parts)
     
     def to_dict(self) -> Dict:
-        """Serialize workspace state."""
         with self._lock:
             return {
                 "root_dir": self._root_dir,
@@ -336,13 +276,11 @@ class Workspace:
             }
     
     def save(self, filepath: str) -> None:
-        """Save workspace state to file."""
         with open(filepath, 'w') as f:
             json.dump(self.to_dict(), f, indent=2)
     
     @classmethod
     def load(cls, filepath: str) -> "Workspace":
-        """Load workspace state from file."""
         with open(filepath, 'r') as f:
             data = json.load(f)
         
@@ -358,7 +296,6 @@ class Workspace:
     
     @classmethod
     def reset(cls) -> None:
-        """Reset the singleton instance."""
         with cls._lock:
             cls._instance = None
 

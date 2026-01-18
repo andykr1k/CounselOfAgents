@@ -4,11 +4,10 @@ import asyncio
 import subprocess
 import os
 import shlex
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from dataclasses import dataclass
-from pathlib import Path
 
-from config import ShellConfig, get_config
+from counsel.config import ShellConfig, get_config
 
 
 @dataclass
@@ -69,13 +68,11 @@ class Shell:
     def cd(self, path: str) -> ShellResult:
         """Change working directory."""
         try:
-            # Resolve path relative to current directory
             if not os.path.isabs(path):
                 new_path = os.path.normpath(os.path.join(self._cwd, path))
             else:
                 new_path = os.path.normpath(path)
             
-            # Check if path exists and is a directory
             if not os.path.exists(new_path):
                 return ShellResult(
                     command=f"cd {path}",
@@ -118,12 +115,10 @@ class Shell:
         """Check if a command should be blocked."""
         command_lower = command.lower()
         
-        # Check blocked patterns
         for pattern in self.config.blocked_patterns:
             if pattern.lower() in command_lower:
                 return True, f"Blocked pattern: {pattern}"
         
-        # Check sudo if not allowed
         if not self.config.allow_sudo:
             if command_lower.startswith("sudo ") or " sudo " in command_lower:
                 return True, "sudo commands are not allowed"
@@ -147,17 +142,7 @@ class Shell:
         timeout: Optional[int] = None,
         cwd: Optional[str] = None
     ) -> ShellResult:
-        """
-        Run a shell command.
-        
-        Args:
-            command: The command to run
-            timeout: Timeout in seconds (uses config default if not specified)
-            cwd: Working directory (uses shell's cwd if not specified)
-            
-        Returns:
-            ShellResult with command output
-        """
+        """Run a shell command asynchronously."""
         # Check if blocked
         is_blocked, reason = self._is_blocked(command)
         if is_blocked:
@@ -171,11 +156,10 @@ class Shell:
                 error=reason
             )
         
-        # Handle cd specially (needs to persist)
+        # Handle cd specially
         stripped = command.strip()
         if stripped.startswith("cd "):
             path = stripped[3:].strip()
-            # Remove quotes if present
             if (path.startswith('"') and path.endswith('"')) or \
                (path.startswith("'") and path.endswith("'")):
                 path = path[1:-1]
@@ -183,18 +167,16 @@ class Shell:
         elif stripped == "cd":
             return self.cd(os.path.expanduser("~"))
         
-        # Determine working directory and timeout
         work_dir = cwd or self._cwd
         cmd_timeout = timeout or self.config.default_timeout
         
         try:
-            # Run command asynchronously
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=work_dir,
-                env={**os.environ, "TERM": "dumb"}  # Disable terminal colors
+                env={**os.environ, "TERM": "dumb"}
             )
             
             try:
@@ -215,7 +197,6 @@ class Shell:
                 )
                 
             except asyncio.TimeoutError:
-                # Kill the process on timeout
                 process.kill()
                 await process.wait()
                 
@@ -245,12 +226,7 @@ class Shell:
         timeout: Optional[int] = None,
         cwd: Optional[str] = None
     ) -> ShellResult:
-        """
-        Run a shell command synchronously.
-        
-        For use in non-async contexts.
-        """
-        # Check if blocked
+        """Run a shell command synchronously."""
         is_blocked, reason = self._is_blocked(command)
         if is_blocked:
             return ShellResult(
@@ -263,7 +239,6 @@ class Shell:
                 error=reason
             )
         
-        # Handle cd specially
         stripped = command.strip()
         if stripped.startswith("cd "):
             path = stripped[3:].strip()
@@ -274,7 +249,6 @@ class Shell:
         elif stripped == "cd":
             return self.cd(os.path.expanduser("~"))
         
-        # Determine working directory and timeout
         work_dir = cwd or self._cwd
         cmd_timeout = timeout or self.config.default_timeout
         
@@ -320,19 +294,10 @@ class Shell:
     
     async def run_many(
         self,
-        commands: list[str],
+        commands: List[str],
         stop_on_error: bool = True
-    ) -> list[ShellResult]:
-        """
-        Run multiple commands sequentially.
-        
-        Args:
-            commands: List of commands to run
-            stop_on_error: Whether to stop on first error
-            
-        Returns:
-            List of ShellResults
-        """
+    ) -> List[ShellResult]:
+        """Run multiple commands sequentially."""
         results = []
         for cmd in commands:
             result = await self.run(cmd)
@@ -344,13 +309,8 @@ class Shell:
     def pwd(self) -> str:
         """Get current working directory."""
         return self._cwd
-    
-    def ls(self, path: str = ".") -> ShellResult:
-        """List directory contents."""
-        return self.run_sync(f"ls -la {shlex.quote(path)}")
 
 
-# Convenience function
 def get_shell(config: Optional[ShellConfig] = None) -> Shell:
     """Get a new shell instance."""
     return Shell(config)

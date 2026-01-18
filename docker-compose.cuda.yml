@@ -1,26 +1,35 @@
 version: '3.8'
 
 services:
-  counsel-of-agents:
+  counsel-agents:
     build:
       context: .
       dockerfile: Dockerfile.cuda
-    container_name: counsel-of-agents-gpu
+    container_name: counsel-agents-gpu
     stdin_open: true
     tty: true
     volumes:
-      # Mount current directory for file operations
-      - .:/app/workspace
-      # Cache for Hugging Face models
+      # Mount projects directory for agent work (persists across runs)
+      - ./projects:/app/projects
+      # Cache for Hugging Face models (saves download time)
       - ~/.cache/huggingface:/root/.cache/huggingface
-    working_dir: /app/workspace
+    working_dir: /app/projects
     environment:
       - PYTHONUNBUFFERED=1
+      - AGENT_VERBOSE=1
       - CUDA_VISIBLE_DEVICES=0
+      # Use larger model with GPU
+      - AGENT_LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
+    # Health check to verify GPU access
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import torch; assert torch.cuda.is_available()" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3

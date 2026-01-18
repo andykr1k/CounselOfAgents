@@ -1,37 +1,68 @@
-# Counsel of Agents - Dockerfile with CUDA support
+# Agent Orchestration System - Dockerfile with CUDA support
 # For GPU-accelerated inference
 
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
-# Install Python 3.12
+# Prevent timezone prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
+# Install Python and system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-dev \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
     python3-pip \
     build-essential \
     git \
     curl \
+    wget \
+    vim \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlink for python
-RUN ln -s /usr/bin/python3.12 /usr/bin/python
+# Create symlinks for python
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python && \
+    ln -sf /usr/bin/python3.11 /usr/bin/python3
+
+# Upgrade pip
+RUN python -m pip install --upgrade pip setuptools wheel
 
 # Set working directory
 WORKDIR /app
 
-# Install Python dependencies (with CUDA support)
+# Install PyTorch with CUDA support first
+RUN pip install --no-cache-dir \
+    torch \
+    torchvision \
+    torchaudio \
+    --index-url https://download.pytorch.org/whl/cu121
+
+# Install other dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install flash-attention for faster inference (optional, may fail on some GPUs)
+RUN pip install --no-cache-dir flash-attn --no-build-isolation || echo "flash-attn installation skipped"
 
 # Copy application code
-COPY *.py ./
+COPY counsel/ ./counsel/
+COPY main.py .
+COPY tests/ ./tests/
+
+# Create projects directory for agent work
+RUN mkdir -p /app/projects
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV CUDA_VISIBLE_DEVICES=0
+ENV PYTHONPATH=/app
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH="${CUDA_HOME}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
+
+# Verify CUDA is accessible
+RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
 # Default command (interactive mode)
-CMD ["python", "main.py", "-i"]
+CMD ["python", "main.py", "-i", "-w", "/app/projects"]

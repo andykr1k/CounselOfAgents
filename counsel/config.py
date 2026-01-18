@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 from typing import List, Optional
-from pathlib import Path
 import os
 
 
@@ -129,6 +128,11 @@ class Config:
         if max_parallel := os.getenv("AGENT_MAX_PARALLEL"):
             config.execution.max_parallel_agents = int(max_parallel)
         
+        # Quantization
+        if os.getenv("AGENT_NO_QUANTIZE", "").lower() in ("1", "true", "yes"):
+            config.llm.load_in_4bit = False
+            config.llm.load_in_8bit = False
+        
         # Verbosity
         if os.getenv("AGENT_VERBOSE", "").lower() in ("1", "true", "yes"):
             config.verbose = True
@@ -153,15 +157,18 @@ class Config:
 
 
 # Global default config
-DEFAULT_CONFIG = Config()
+_DEFAULT_CONFIG: Optional[Config] = None
 
 
 def get_config() -> Config:
     """Get the current configuration."""
-    return DEFAULT_CONFIG
+    global _DEFAULT_CONFIG
+    if _DEFAULT_CONFIG is None:
+        _DEFAULT_CONFIG = Config()
+    return _DEFAULT_CONFIG
 
 
 def set_config(config: Config) -> None:
     """Set the global configuration."""
-    global DEFAULT_CONFIG
-    DEFAULT_CONFIG = config
+    global _DEFAULT_CONFIG
+    _DEFAULT_CONFIG = config

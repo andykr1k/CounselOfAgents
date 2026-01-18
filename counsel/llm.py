@@ -1,12 +1,12 @@
 """LLM abstraction layer for HuggingFace models (Qwen, etc.)."""
 
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-from config import LLMConfig, get_config
+from counsel.config import LLMConfig, get_config
 
 
 @dataclass
@@ -92,27 +92,27 @@ class LLM:
         
         # Quantization config
         quantization_config = None
-        if self.config.load_in_4bit:
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4"
-            )
-        elif self.config.load_in_8bit:
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+        if self.device == "cuda":
+            if self.config.load_in_4bit:
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4"
+                )
+            elif self.config.load_in_8bit:
+                quantization_config = BitsAndBytesConfig(load_in_8bit=True)
         
         # Load model
         model_kwargs = {
             "trust_remote_code": self.config.trust_remote_code,
-            "device_map": "auto" if self.device in ("cuda", "auto") else None,
+            "device_map": "auto" if self.device == "cuda" else None,
         }
         
         if quantization_config:
             model_kwargs["quantization_config"] = quantization_config
         
         if self.device == "mps":
-            # MPS doesn't support quantization well
             model_kwargs["torch_dtype"] = torch.float16
         
         self.model = AutoModelForCausalLM.from_pretrained(
@@ -125,14 +125,12 @@ class LLM:
             self.model = self.model.to(self.device)
         
         self.model.eval()
-        print(f"Model loaded successfully!")
+        print(f"Model loaded successfully on {self.device}!")
     
     def _format_messages(self, messages: List[Message]) -> str:
         """Format messages for the model using chat template."""
-        # Convert to dict format
         message_dicts = [{"role": m.role, "content": m.content} for m in messages]
         
-        # Use the model's chat template if available
         if hasattr(self.tokenizer, "apply_chat_template"):
             return self.tokenizer.apply_chat_template(
                 message_dicts,
@@ -227,7 +225,6 @@ class LLM:
             del self.tokenizer
             self.tokenizer = None
         
-        # Clear CUDA cache if available
         try:
             import torch
             if torch.cuda.is_available():
@@ -239,7 +236,6 @@ class LLM:
         self._initialized = False
 
 
-# Convenience function
 def get_llm(config: Optional[LLMConfig] = None) -> LLM:
     """Get the singleton LLM instance."""
     return LLM(config)

@@ -6,7 +6,7 @@ torch>=2.0.0
 transformers>=4.40.0
 accelerate>=0.27.0
 
-# Quantization (for efficient 4-bit inference)
+# Quantization (for efficient inference)
 bitsandbytes>=0.43.0
 
 # Tokenizers
@@ -16,5 +16,9 @@ protobuf>=4.25.0
 # CLI and display
 rich>=13.7.0
 
-# Optional: for faster inference
-flash-attn>=2.5.0  # Requires CUDA
+# Testing (optional)
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# Optional: faster attention (requires CUDA)
+# flash-attn>=2.5.0

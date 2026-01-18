@@ -2,14 +2,34 @@
 
 A multi-agent system that breaks down complex, long-horizon tasks into a dependency graph and executes them in parallel. Features a **shared workspace** for agent coordination and an **interactive shell** for direct control.
 
-## Key Features
+## Quick Start
 
-- **🤖 Single Orchestrator** - One intelligent agent that decomposes complex tasks
-- **📊 DAG-Based Execution** - Tasks run in parallel, respecting dependencies  
-- **🔄 Shared Workspace** - Agents see each other's files, directories, and activities
-- **💻 Interactive Shell** - Run shell commands alongside orchestrated tasks
-- **🔌 General-Purpose Agents** - No specialized agents; all workers are identical
-- **🐚 Full Shell Access** - Agents can run any command (ls, git, npm, etc.)
+### Using Docker (Recommended)
+
+```bash
+# CPU version
+make docker-build
+make docker-run
+
+# GPU/CUDA version
+make docker-cuda
+make docker-gpu
+```
+
+### Local Installation
+
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+## Features
+
+- 🤖 **Single Orchestrator** - Intelligent task decomposition
+- 📊 **DAG-Based Execution** - Parallel task execution with dependencies
+- 🔄 **Shared Workspace** - Agents see each other's files and activities
+- 💻 **Interactive Shell** - Run commands alongside orchestrated tasks
+- 🐚 **Full Shell Access** - Agents can run any command
 
 ## Architecture
 
@@ -26,140 +46,69 @@ A multi-agent system that breaks down complex, long-horizon tasks into a depende
               │      SHARED WORKSPACE       │
               │  • Files & Directories      │
               │  • Agent Activities         │
-              │  • Shared Variables         │
-              │  • Project Context          │
+              │  • Shared Context           │
               └──────────────┬──────────────┘
                              │
          ┌───────────────────┼───────────────────┐
          ▼                   ▼                   ▼
    ┌───────────┐       ┌───────────┐       ┌───────────┐
    │  Agent 1  │       │  Agent 2  │       │  Agent 3  │
-   │  [shell]  │◄─────►│  [shell]  │◄─────►│  [shell]  │
+   │  [shell]  │       │  [shell]  │       │  [shell]  │
    └───────────┘       └───────────┘       └───────────┘
-         │                   │                   │
-         └───────────────────┴───────────────────┘
-                    Coordination via Workspace
-```
-
-## How Agent Coordination Works
-
-Agents share context through the **Workspace**:
-
-1. **File Tracking**: When Agent 1 creates `src/index.js`, Agent 2 knows about it
-2. **Activity Log**: Agents see what others are doing in real-time
-3. **Shared Variables**: Tasks can pass data to dependent tasks
-4. **Project Structure**: All agents understand the current directory layout
-
-```python
-# Example: Agent 2 receives this context
-"""
-## Project Structure
-Root: /home/user/my-project
-Current directory: /home/user/my-project
-
-### Files in workspace:
-  - package.json (by agent_1)
-  - src/index.js (by agent_1)
-
-### Other agents currently working:
-  - agent_3: Setting up database configuration...
-
-### Recent activities:
-  - [agent_1] created_file: package.json
-  - [agent_1] ran_command: npm init -y
-"""
-```
-
-## Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/CounselOfAgents.git
-cd CounselOfAgents
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
 ```
 
 ## Usage
 
-### Interactive Shell Mode (Recommended)
+### Interactive Shell Mode
 
 ```bash
 python main.py
 ```
 
-This opens an interactive shell where you can:
-- Run orchestrated tasks by typing them
-- Execute shell commands directly with `!` prefix
-- Check workspace status with `@` commands
-
 ```
-my-project > Create a Python Flask API with user authentication
+myproject > Create a Python Flask API with authentication
 
 🔍 Analyzing task and creating execution plan...
 📋 Created 4 tasks
 
 📋 Task Graph
 ├── Level 1
-│   ├── ● task_1: Create project directory and initialize Flask app
+│   ├── ● task_1: Create project directory
 ├── Level 2
-│   ├── ◑ task_2: Install Flask and dependencies
-│   ├── ◑ task_3: Create user model and database setup
+│   ├── ◑ task_2: Set up Flask application
+│   ├── ◑ task_3: Create user model
 ├── Level 3
-│   └── ○ task_4: Create authentication routes and middleware
+│   └── ○ task_4: Add authentication routes
 
 ✓ task_1 completed
 ✓ task_2 completed
-✓ task_3 completed  
+✓ task_3 completed
 ✓ task_4 completed
 
 ✅ All tasks completed successfully!
 
-my-project > !ls -la
-total 24
-drwxr-xr-x  5 user  staff   160 Jan 18 10:30 .
--rw-r--r--  1 user  staff   245 Jan 18 10:30 app.py
--rw-r--r--  1 user  staff   512 Jan 18 10:30 models.py
--rw-r--r--  1 user  staff   128 Jan 18 10:30 requirements.txt
-
-my-project > @status
-╭─────────────────────────────────────────────╮
-│ Status                                      │
-│ 📁 Working Directory: /home/user/my-project │
-│                                             │
-│ 📄 Recent Files:                            │
-│    • app.py                                 │
-│    • models.py                              │
-│    • requirements.txt                       │
-│                                             │
-│ 📊 Tasks: 4/4 completed                     │
-╰─────────────────────────────────────────────╯
+myproject > !ls -la           # Run shell command
+myproject > @status           # Show workspace status
+myproject > @files            # List files created
 ```
+
+### Shell Commands
+
+| Command | Description |
+|---------|-------------|
+| `!<cmd>` | Run shell command directly |
+| `@status` | Show workspace status |
+| `@files` | List workspace files |
+| `@history` | Show agent activities |
+| `@clear` | Clear screen |
+| `help` | Show examples |
+| `exit` | Exit |
 
 ### Single Task Mode
 
 ```bash
-python main.py "Create a React todo app with local storage"
+python main.py "Create a React todo app"
 ```
-
-### Shell Commands Reference
-
-| Command | Description |
-|---------|-------------|
-| `!<cmd>` | Run shell command directly (e.g., `!ls -la`) |
-| `@status` | Show workspace status (files, agents, tasks) |
-| `@files` | List all files in workspace |
-| `@dirs` | List all directories |
-| `@history` | Show recent agent activities |
-| `@context` | Show full workspace context |
-| `@clear` | Clear the screen |
-| `help` | Show example tasks |
-| `exit` | Exit the shell |
 
 ### Command Line Options
 
@@ -170,42 +119,112 @@ Options:
   -i, --interactive         Interactive shell mode
   -w, --workspace DIR       Working directory for agents
   -m, --model MODEL         HuggingFace model name
-  --device {auto,cuda,mps,cpu}  Device to run on
+  --device {auto,cuda,mps,cpu}
   -p, --parallel N          Max parallel agents (default: 3)
   --no-quantize             Disable 4-bit quantization
-  -v, --verbose             Enable verbose output
-  --continue-on-failure     Continue even if tasks fail
+  -v, --verbose             Verbose output
 ```
 
-### Examples
+## Docker
+
+### Build Images
 
 ```bash
-# Start in specific directory
-python main.py -w ./my-new-project
+# CPU version
+make docker-build
 
-# Use coding-optimized model
-python main.py -m "Qwen/Qwen2.5-Coder-7B-Instruct"
+# CUDA/GPU version  
+make docker-cuda
+```
 
-# More parallel agents
-python main.py -p 5 "Build a microservices architecture"
+### Run Containers
 
-# Continue even if some tasks fail
-python main.py --continue-on-failure "Set up CI/CD pipeline"
+```bash
+# CPU - Interactive mode
+make docker-run
+
+# GPU - Interactive mode
+make docker-gpu
+
+# Run tests in Docker
+make docker-test
+make docker-test-gpu
+```
+
+### Docker Compose
+
+```bash
+# CPU version
+docker-compose up -d
+docker-compose exec counsel-agents python main.py
+
+# GPU version
+docker-compose -f docker-compose.cuda.yml up -d
+docker-compose -f docker-compose.cuda.yml exec counsel-agents python main.py
+```
+
+### Docker with Custom Task
+
+```bash
+docker run -it --rm \
+  -v $(pwd)/projects:/app/projects \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  counsel-agents:latest \
+  python main.py "Create a hello world project"
+```
+
+### Docker with GPU
+
+```bash
+docker run -it --rm --gpus all \
+  -v $(pwd)/projects:/app/projects \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  counsel-agents:cuda \
+  python main.py -i
 ```
 
 ## Project Structure
 
 ```
 CounselOfAgents/
-├── main.py              # CLI with interactive shell
-├── orchestrator.py      # Task planning and coordination
-├── agent.py             # Worker agents with shell access
-├── task_graph.py        # DAG for task dependencies
-├── workspace.py         # Shared state for coordination
-├── llm.py               # HuggingFace LLM interface
-├── shell.py             # Safe shell execution
-├── config.py            # Configuration management
-└── requirements.txt     # Dependencies
+├── counsel/                 # Main package
+│   ├── __init__.py
+│   ├── agent.py            # Worker agents
+│   ├── config.py           # Configuration
+│   ├── llm.py              # LLM interface
+│   ├── orchestrator.py     # Task coordination
+│   ├── shell.py            # Shell execution
+│   ├── task_graph.py       # DAG management
+│   └── workspace.py        # Shared state
+├── tests/                   # Test suite
+│   ├── __init__.py
+│   └── test_basic.py
+├── projects/                # Agent working directory (gitignored)
+├── main.py                  # CLI entry point
+├── Dockerfile               # CPU Docker image
+├── Dockerfile.cuda          # GPU Docker image
+├── docker-compose.yml       # CPU compose
+├── docker-compose.cuda.yml  # GPU compose
+├── Makefile                 # Build commands
+├── pyproject.toml           # Package config
+├── requirements.txt
+└── README.md
+```
+
+## Testing
+
+```bash
+# Local tests
+make test
+
+# With coverage
+make test-cov
+
+# In Docker
+make docker-test
+
+# In Docker with GPU
+make docker-test-gpu
 ```
 
 ## Configuration
@@ -217,56 +236,52 @@ export AGENT_LLM_MODEL="Qwen/Qwen2.5-7B-Instruct"
 export AGENT_LLM_DEVICE="cuda"
 export AGENT_MAX_PARALLEL=5
 export AGENT_VERBOSE=1
+export AGENT_NO_QUANTIZE=0
 ```
 
 ### Recommended Models
 
 | Model | Size | Memory | Best For |
 |-------|------|--------|----------|
-| `Qwen/Qwen2.5-1.5B-Instruct` | 1.5B | ~4GB | Simple tasks, testing |
+| `Qwen/Qwen2.5-1.5B-Instruct` | 1.5B | ~4GB | Testing, simple tasks |
 | `Qwen/Qwen2.5-7B-Instruct` | 7B | ~8GB | General use (default) |
 | `Qwen/Qwen2.5-Coder-7B-Instruct` | 7B | ~8GB | Code-heavy tasks |
 | `Qwen/Qwen2.5-14B-Instruct` | 14B | ~12GB | Complex reasoning |
 
-## Safety Features
+## How Agent Coordination Works
 
-- **Blocked Commands**: Dangerous patterns like `rm -rf /` are blocked
-- **No Sudo**: Sudo disabled by default
-- **Timeouts**: Commands timeout after 120 seconds
-- **Output Limits**: Large outputs are truncated
+Agents share context through the **Workspace**:
 
-## How It Works
+1. **File Tracking**: Agent 1 creates `src/app.py` → Agent 2 sees it
+2. **Activity Log**: Real-time visibility into what agents are doing
+3. **Shared Variables**: Pass data between dependent tasks
+4. **Project Structure**: All agents understand the directory layout
 
-1. **User Request** → "Build a REST API with Express"
+```python
+# Agent 2 receives this context:
+"""
+## Project Structure
+Root: /app/projects/my-api
 
-2. **Planning Phase** → Orchestrator uses LLM to decompose:
-   ```
-   task_1: Create directory and npm init
-   task_2: Install express (depends on task_1)
-   task_3: Create routes (depends on task_2)
-   task_4: Add error handling (depends on task_3)
-   ```
+### Files in workspace:
+  - package.json (by agent_1)
+  - src/index.js (by agent_1)
 
-3. **Execution Phase** → Agents execute in parallel where possible:
-   ```
-   Level 1: [task_1] ────────────────►
-   Level 2:          [task_2] ───────►
-   Level 3:                   [task_3]
-   Level 4:                            [task_4]
-   ```
+### Other agents currently working:
+  - agent_3: Setting up database...
 
-4. **Coordination** → Via shared workspace:
-   - Agent 1 creates files → Workspace tracks them
-   - Agent 2 starts → Sees Agent 1's files in context
-   - Agent 3 starts → Sees both agents' work
-
-5. **Results** → Aggregated and displayed
+### Recent activities:
+  - [agent_1] ran_command: npm init -y
+  - [agent_1] created_file: package.json
+"""
+```
 
 ## Requirements
 
 - Python 3.10+
 - ~8GB RAM (with 4-bit quantization)
-- CUDA GPU recommended (works on CPU/MPS too)
+- NVIDIA GPU recommended (works on CPU/MPS)
+- Docker (optional, for containerized usage)
 
 ## License
 

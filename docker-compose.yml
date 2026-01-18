@@ -1,26 +1,21 @@
 version: '3.8'
 
 services:
-  counsel-of-agents:
+  counsel-agents:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: counsel-of-agents
+    container_name: counsel-agents
     stdin_open: true
     tty: true
     volumes:
-      # Mount current directory for file operations
-      - .:/app/workspace
-      # Cache for Hugging Face models
+      # Mount projects directory for agent work (persists across runs)
+      - ./projects:/app/projects
+      # Cache for Hugging Face models (saves download time)
       - ~/.cache/huggingface:/root/.cache/huggingface
-    working_dir: /app/workspace
+    working_dir: /app/projects
     environment:
       - PYTHONUNBUFFERED=1
-    # For GPU support, uncomment the following and use Dockerfile.cuda
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+      - AGENT_VERBOSE=1
+    # Override command if needed
+    # command: python main.py "Create a hello world project"
