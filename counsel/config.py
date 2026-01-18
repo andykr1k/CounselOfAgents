@@ -65,10 +65,10 @@ class AgentConfig:
     """Configuration for worker agents."""
     
     # Maximum iterations per task (prevent infinite loops)
-    max_iterations: int = 15
+    max_iterations: int = 100
     
     # Maximum shell commands per task
-    max_shell_commands: int = 50
+    max_shell_commands: int = 100
     
     # Whether agent can create files
     can_create_files: bool = True
@@ -85,7 +85,7 @@ class ExecutionConfig:
     """Configuration for task execution."""
     
     # Maximum parallel agents
-    max_parallel_agents: int = 3
+    max_parallel_agents: int = 5
     
     # Task timeout (seconds)
     task_timeout: int = 600
