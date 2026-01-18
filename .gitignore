@@ -59,7 +59,8 @@ ENV/
 Thumbs.db
 
 # Project specific
-projects/
+projects/**
+!projects/.gitkeep
 *.log
 .agent_state.json
 

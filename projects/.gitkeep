@@ -1,0 +1,3 @@
+# This directory is the default working directory for agents.
+# Files created by agents will appear here.
+# This directory is gitignored except for this file.
