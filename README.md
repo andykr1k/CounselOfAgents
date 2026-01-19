@@ -1,24 +1,33 @@
-# Counsel of Agents
+# Counsel AI
 
-A multi-agent orchestration system that breaks down complex tasks into a dependency graph (DAG) and executes them in parallel using LLM-powered agents with shell access.
+**Enterprise Multi-Agent Orchestration Platform**
 
-## Features
+An intelligent orchestration system that breaks down complex tasks into dependency graphs and executes them using self-correcting AI agents with built-in verification.
 
-### Core
-- 🤖 **Intelligent Task Decomposition** - LLM breaks down complex tasks into executable subtasks
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/your-org/counsel)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
+
+## Key Features
+
+### Core Capabilities
+- 🤖 **Intelligent Task Decomposition** - LLM-powered breakdown of complex tasks into executable subtasks
 - 📊 **DAG-Based Execution** - Parallel task execution respecting dependencies
-- 🔄 **Shared Workspace** - Agents coordinate through a shared file/activity tracker
-- 💻 **Interactive Shell** - Full control with command history (↑/↓ arrows)
-- 🐚 **Shell Access** - Agents execute real commands in your environment
-
-### New Features
-- 🎯 **Model Selection** - Interactive model picker on first run with RAM/VRAM requirements
-- 📋 **Job Persistence** - All jobs saved to `~/.counsel/jobs/` for history and recovery
-- 🔍 **Debug Mode** - See everything agents do: LLM calls, shell commands, thinking
-- 🌳 **File Tree Context** - Agents see visual directory structure, not just file lists
+- ✅ **Task Verification** - Automatic verification that tasks were completed correctly
+- 🔄 **Self-Correcting Agents** - Agents retry with specific remediation when verification fails
 - 🧑‍💼 **Supervisor Intervention** - When agents get stuck, a supervisor provides fresh guidance
+
+### Enterprise Features
+- 📋 **Job Persistence** - All jobs saved to `~/.counsel/jobs/` for history and recovery
+- 📝 **Professional Logging** - Structured logging with telemetry, metrics, and audit trails
+- ⚙️ **Configuration Validation** - Comprehensive config validation with environment variable support
+- 🔍 **Debug Mode** - See everything agents do: LLM calls, shell commands, thinking
 - 🛡️ **Process Cleanup** - Proper cleanup of all subprocesses on exit/interrupt
-- ⌨️ **Command History** - Up/down arrows navigate previous commands (saved to `~/.counsel_history`)
+
+### Interactive Features
+- 💻 **Interactive Shell** - Full control with command history (↑/↓ arrows)
+- 🎯 **Model Selection** - Interactive model picker with RAM/VRAM requirements
+- 🌳 **File Tree Context** - Agents see visual directory structure
 
 ## Quick Start
 
@@ -30,28 +39,15 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### First Run - Model Selection
+### With Task Verification
 
-On first run, you'll see an interactive model selection screen:
+```bash
+# Enable automatic task verification
+python main.py --verify "Create a REST API with user authentication"
 
-```
-🤖 Model Selection
-
-Choose a language model to power your agents.
-
-📊 System Info
-RAM: 32 GB
-GPU: CUDA detected - 12 GB VRAM
-
-Available Models:
- #  Model                    Size   VRAM    RAM    Context  Description
- 1  Qwen 2.5 0.5B            0.5B   0.8 GB  1 GB   32k      Ultra-lightweight
- 2  Qwen 2.5 1.5B            1.5B   1.5 GB  2 GB   32k      Lightweight but capable
- 3  Qwen 2.5 3B              3B     2.5 GB  3 GB   32k      Good for coding
- 4  Qwen 2.5 7B ⭐           7B     5 GB    6 GB   32k      Recommended default
- ...
-
-Select model [1]: 4
+# Or toggle in interactive mode
+projects > @verify
+✓ Task verification ENABLED
 ```
 
 ## Usage
@@ -63,26 +59,27 @@ python main.py
 ```
 
 ```
-✨ Agent Shell Ready
+⚡ COUNSEL AI ⚡
+Enterprise Multi-Agent Orchestration Platform
+
+✨ Counsel AI Ready
 
 Commands:
   !<command>       - Run shell command directly
   @status          - Show workspace status
   @files           - List workspace files
-  @history         - Show agent activities
+  @verify          - Toggle task verification
   @debug           - Toggle debug mode
   @model           - Show current model
   @jobs            - Show past job history
-  @delete <id>     - Delete a job by ID
-  @delete all      - Delete all jobs
   help             - Show examples
   exit             - Exit the shell
 
   Use ↑/↓ arrows to navigate command history
 
-projects > Create a Python calculator CLI
+projects > Create a Python calculator CLI with verification
 
-📝 Task: Create a Python calculator CLI
+📝 Task: Create a Python calculator CLI (with verification)
 Job ID: a1b2c3d4
 
 Planning...
@@ -97,49 +94,30 @@ Planning...
 │   ○ task_3: Create main.py CLI entry point          │
 │ Level 4:                                            │
 │   ○ task_4: Test the calculator                     │
-│                                                     │
-│ ● 0 | ◑ 1 | ◐ 0 | ○ 3 | ✗ 0                        │
 ╰─────────────────────────────────────────────────────╯
 ```
 
-### Debug Mode (ON by default)
+### Task Verification
 
-Shows everything agents are doing:
+When verification is enabled, each completed task is analyzed to ensure it meets requirements:
 
 ```
-╭──────────────── 🔍 Debug Output ────────────────────╮
-│ 19:35:02 ▶ agent_1 Task: Create project with venv   │
-│ 19:35:02 💭 agent_1 Planning approach...            │
-│ 19:35:05 $ agent_1 $ mkdir -p calculator            │
-│ 19:35:05   ↳ agent_1 Exit 0: (no output)            │
-│ 19:35:05 $ agent_1 $ python -m venv calculator/venv │
-│ 19:35:07   ↳ agent_1 Exit 0: (no output)            │
-│ 19:35:07 📄 agent_1 Created: calculator/venv        │
-│ 19:35:10 ✓ agent_1 Created project structure        │
-╰─────────────────────────────────────────────────────╯
-```
+Verification Results
+┌─────────┬───────┐
+│ Status  │ Count │
+├─────────┼───────┤
+│ ✓ Passed│ 3     │
+│ ⚠ Partial│ 1    │
+│ ✗ Failed│ 0     │
+│ Pass Rate│ 75%  │
+└─────────┴───────┘
 
-### Shell Commands
-
-| Command | Description |
-|---------|-------------|
-| `!<cmd>` | Run shell command directly |
-| `@status` | Show workspace status |
-| `@files` | List workspace files |
-| `@history` | Show agent activities |
-| `@debug` | Toggle debug mode |
-| `@model` | Show current model |
-| `@jobs` | List job history |
-| `@job <id>` | Show job details |
-| `@delete <id>` | Delete a job |
-| `@delete all` | Delete all jobs |
-| `help` | Show examples |
-| `exit` | Exit |
-
-### Single Task Mode
-
-```bash
-python main.py "Create a React todo app"
+✓ task_1 ✓ verified
+✓ task_2 ✓ verified
+✓ task_3 ⚠ partial (80%)
+  Issues found:
+    🟠 Documentation missing - README not created
+✓ task_4 ✓ verified
 ```
 
 ### Command Line Options
@@ -149,20 +127,29 @@ python main.py --help
 
 Options:
   task                      Task to execute (optional)
+  --verify                  Enable task verification
+  --max-retries N           Max retries for failed verifications (default: 2)
   --select-model            Show model selection screen
   --list-models             List all available models
   --reset-model             Clear saved model selection
-  --jobs                    List all jobs
-  --job ID                  Show specific job details
-  -i, --interactive         Interactive shell mode
+  -i, --interactive         Force interactive shell mode
   -w, --workspace DIR       Working directory
   -m, --model MODEL         HuggingFace model ID
   --device {auto,cuda,mps,cpu}
-  -p, --parallel N          Max parallel agents (default: 3)
+  -p, --parallel N          Max parallel agents (default: 5)
   --no-quantize             Disable 4-bit quantization
   -v, --verbose             Verbose output
   -d, --debug               Debug mode (ON by default)
   --continue-on-failure     Continue if tasks fail
+
+Environment Variables:
+  COUNSEL_MODEL             HuggingFace model ID
+  COUNSEL_DEVICE            Device to use (auto, cuda, mps, cpu)
+  COUNSEL_VERIFY            Enable verification by default (1/true/yes)
+  COUNSEL_DEBUG             Enable debug mode (1/true/yes)
+  COUNSEL_MAX_PARALLEL      Maximum parallel agents
+  COUNSEL_LOG_FILE          Path to log file
+  COUNSEL_LOG_LEVEL         Logging level (DEBUG, INFO, WARNING, ERROR)
 ```
 
 ## Architecture
@@ -174,6 +161,12 @@ Options:
 │  │ Task Planner │   │  Task Graph  │   │ Execution Engine │  │
 │  │  (LLM-based) │   │    (DAG)     │   │  (Agent Spawner) │  │
 │  └──────────────┘   └──────────────┘   └──────────────────┘  │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              VERIFICATION MANAGER                     │   │
+│  │  • Task Analysis    • Issue Detection                 │   │
+│  │  • Remediation      • Retry Logic                     │   │
+│  └──────────────────────────────────────────────────────┘   │
 └────────────────────────────┬─────────────────────────────────┘
                              │
               ┌──────────────┴──────────────┐
@@ -181,7 +174,6 @@ Options:
               │  • File Tree (visual)       │
               │  • Agent Activities         │
               │  • Shared Variables         │
-              │  • Real-time Coordination   │
               └──────────────┬──────────────┘
                              │
          ┌───────────────────┼───────────────────┐
@@ -195,60 +187,128 @@ Options:
    └───────────┘       └───────────┘       └───────────┘
 ```
 
-## Agent Context
+## Configuration
 
-Agents receive rich context including a visual file tree:
+### Production Configuration
 
-```
-==================================================
-PROJECT: calculator
-ROOT PATH: /home/user/projects/calculator
-CURRENT DIRECTORY: /home/user/projects/calculator
-==================================================
+```python
+from counsel import Config
 
-## File Tree (actual filesystem)
-```
-calculator/
-├── src/
-│   └── calc.py ← created by agent_1
-├── tests/
-│   └── test_calc.py ← created by agent_3
-├── main.py ← created by agent_2
-└── venv/
-    └── bin/
-        └── python
+config = Config.for_production()
+# Includes:
+# - Task verification enabled
+# - Optimized model settings
+# - Audit logging enabled
+# - Telemetry enabled
 ```
 
-## Other Agents Working Now:
-  • agent_3: Running tests...
+### Custom Configuration
 
-## Results from Completed Tasks:
-  • task_1: Created project structure
-  • task_2: Implemented calculator functions
+```python
+from counsel import Config
+
+config = Config(
+    llm=LLMConfig(
+        model_name="Qwen/Qwen2.5-14B-Instruct",
+        temperature=0.5,
+    ),
+    verification=VerificationConfig(
+        enabled=True,
+        max_retries=3,
+        min_passing_score=0.85,
+    ),
+    execution=ExecutionConfig(
+        max_parallel_agents=5,
+        continue_on_failure=False,
+    ),
+)
 ```
 
-## Job Persistence
-
-All jobs are automatically saved to `~/.counsel/jobs/`:
+### Environment Variables
 
 ```bash
-# List past jobs
-python main.py --jobs
+export COUNSEL_MODEL="Qwen/Qwen2.5-7B-Instruct"
+export COUNSEL_DEVICE="cuda"
+export COUNSEL_VERIFY="true"
+export COUNSEL_MAX_PARALLEL=5
+export COUNSEL_LOG_FILE="/var/log/counsel/counsel.log"
+export COUNSEL_LOG_LEVEL="INFO"
+```
 
-# Or in interactive mode
-projects > @jobs
+## Recommended Models
 
-Recent Jobs:
-  ✓ a1b2c3d4 Create a Python calculator CLI
-  ✓ e5f6g7h8 Set up Express.js server
-  ✗ i9j0k1l2 Create React app (failed)
+| Model | Size | VRAM (4-bit) | Best For |
+|-------|------|--------------|----------|
+| `Qwen/Qwen2.5-1.5B-Instruct` | 1.5B | ~1.5 GB | Testing, simple tasks |
+| `Qwen/Qwen2.5-7B-Instruct` | 7B | ~5 GB | General use ⭐ |
+| `Qwen/Qwen2.5-Coder-7B-Instruct` | 7B | ~5 GB | Code-heavy tasks ⭐ |
+| `Qwen/Qwen2.5-14B-Instruct` | 14B | ~9 GB | Complex reasoning |
+| `meta-llama/Llama-3.2-3B-Instruct` | 3B | ~2.5 GB | Long context (128k) |
 
-# View job details
-projects > @job a1b2
+## Project Structure
 
-# Delete old jobs
-projects > @delete a1b2
-projects > @delete all
+```
+CounselOfAgents/
+├── counsel/                 # Main package
+│   ├── __init__.py         # Package exports
+│   ├── agent.py            # Worker agents + supervisor intervention
+│   ├── config.py           # Configuration with validation
+│   ├── jobs.py             # Job persistence
+│   ├── llm.py              # LLM interface
+│   ├── logging.py          # Professional logging system
+│   ├── models.py           # Model catalog
+│   ├── orchestrator.py     # Task coordination + verification integration
+│   ├── shell.py            # Shell execution + process tracking
+│   ├── task_graph.py       # DAG management
+│   ├── verification.py     # Task verification system
+│   └── workspace.py        # Shared state + file tree
+├── tests/                  # Test suite
+├── projects/               # Agent working directory
+├── main.py                 # CLI entry point
+├── Dockerfile
+├── Dockerfile.cuda
+├── docker-compose.yml
+├── docker-compose.cuda.yml
+├── Makefile
+├── requirements.txt
+└── README.md
+```
+
+## Programmatic Usage
+
+```python
+import asyncio
+from counsel import Orchestrator, Config
+
+async def main():
+    config = Config.from_env()
+    orchestrator = Orchestrator(config=config)
+    
+    # With verification
+    result = await orchestrator.run(
+        "Create a REST API with user authentication",
+        verify_tasks=True,
+        max_retries=2
+    )
+    
+    if result.success:
+        print("All tasks completed and verified!")
+        print(f"Files created: {result.get_files_created()}")
+        
+        # Check verification summary
+        v_summary = result.get_verification_summary()
+        print(f"Verification pass rate: {v_summary['pass_rate']:.0%}")
+    else:
+        print(f"Execution failed: {result.error}")
+        
+        # Check verification issues
+        for task_id, v_result in result.verification_results.items():
+            if v_result['status'] != 'passed':
+                print(f"Task {task_id} issues:")
+                for issue in v_result.get('issues', []):
+                    print(f"  - {issue['description']}")
+
+asyncio.run(main())
 ```
 
 ## Docker
@@ -276,55 +336,6 @@ docker-compose exec counsel-agents python main.py
 docker-compose -f docker-compose.cuda.yml up -d
 ```
 
-## Configuration
-
-### Environment Variables
-
-```bash
-export AGENT_LLM_MODEL="Qwen/Qwen2.5-7B-Instruct"
-export AGENT_LLM_DEVICE="cuda"
-export AGENT_MAX_PARALLEL=5
-export AGENT_DEBUG=1
-```
-
-### Recommended Models
-
-| Model | Size | VRAM (4-bit) | Best For |
-|-------|------|--------------|----------|
-| `Qwen/Qwen2.5-1.5B-Instruct` | 1.5B | ~1.5 GB | Testing, simple tasks |
-| `Qwen/Qwen2.5-7B-Instruct` | 7B | ~5 GB | General use ⭐ |
-| `Qwen/Qwen2.5-Coder-7B-Instruct` | 7B | ~5 GB | Code-heavy tasks ⭐ |
-| `Qwen/Qwen2.5-14B-Instruct` | 14B | ~9 GB | Complex reasoning |
-| `meta-llama/Llama-3.2-3B-Instruct` | 3B | ~2.5 GB | Long context (128k) |
-
-## Project Structure
-
-```
-CounselOfAgents/
-├── counsel/                 # Main package
-│   ├── __init__.py
-│   ├── agent.py            # Worker agents + supervisor intervention
-│   ├── config.py           # Configuration
-│   ├── jobs.py             # Job persistence
-│   ├── llm.py              # LLM interface
-│   ├── models.py           # Model catalog
-│   ├── orchestrator.py     # Task coordination
-│   ├── shell.py            # Shell execution + process tracking
-│   ├── task_graph.py       # DAG management
-│   └── workspace.py        # Shared state + file tree
-├── tests/
-├── projects/               # Agent working directory
-├── main.py                 # CLI entry point
-├── Dockerfile
-├── Dockerfile.cuda
-├── docker-compose.yml
-├── docker-compose.cuda.yml
-├── Makefile
-├── requirements.txt
-├── README.md
-└── NEXTSTEPS.md           # Roadmap
-```
-
 ## Requirements
 
 - Python 3.10+
@@ -335,3 +346,8 @@ CounselOfAgents/
 ## License
 
 MIT License
+
+---
+
+**Counsel AI** - Enterprise Multi-Agent Orchestration Platform  
+Built for reliability. Designed for scale.

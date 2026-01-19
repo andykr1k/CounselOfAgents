@@ -1,4 +1,14 @@
-"""Basic tests for the Agent Orchestration System."""
+"""
+Comprehensive tests for the Counsel AI Orchestration Platform.
+
+Tests cover:
+    - Task graph management
+    - Shell execution
+    - Workspace operations
+    - Configuration management
+    - Verification system
+    - Logging system
+"""
 
 import pytest
 import asyncio
@@ -13,6 +23,12 @@ from counsel import (
     Workspace,
     Shell,
     ShellResult,
+    VerificationResult,
+    VerificationStatus,
+    VerificationIssue,
+    CounselLogger,
+    get_logger,
+    LogLevel,
 )
 
 
@@ -184,20 +200,210 @@ class TestConfig:
     def test_default_config(self):
         config = Config()
         assert config.llm.model_name == "Qwen/Qwen2.5-7B-Instruct"
-        assert config.execution.max_parallel_agents == 3
+        assert config.execution.max_parallel_agents == 5
     
     def test_testing_config(self):
         config = Config.for_testing()
         assert config.llm.load_in_4bit == False
         assert config.execution.persist_state == False
+        assert config.verification.enabled == False
+    
+    def test_production_config(self):
+        config = Config.for_production()
+        assert config.llm.load_in_4bit == True
+        assert config.verification.enabled == True
+        assert config.debug == False
     
     def test_env_config(self, monkeypatch):
-        monkeypatch.setenv("AGENT_LLM_MODEL", "test-model")
-        monkeypatch.setenv("AGENT_MAX_PARALLEL", "5")
+        monkeypatch.setenv("COUNSEL_MODEL", "test-model")
+        monkeypatch.setenv("COUNSEL_MAX_PARALLEL", "5")
+        monkeypatch.setenv("COUNSEL_VERIFY", "true")
         
         config = Config.from_env()
         assert config.llm.model_name == "test-model"
         assert config.execution.max_parallel_agents == 5
+        assert config.verification.enabled == True
+    
+    def test_legacy_env_config(self, monkeypatch):
+        """Test backward compatibility with AGENT_* env vars."""
+        monkeypatch.setenv("AGENT_LLM_MODEL", "legacy-model")
+        monkeypatch.setenv("AGENT_MAX_PARALLEL", "3")
+        
+        config = Config.from_env()
+        assert config.llm.model_name == "legacy-model"
+        assert config.execution.max_parallel_agents == 3
+    
+    def test_config_validation(self):
+        config = Config()
+        errors = config.validate()
+        assert len(errors) == 0  # Default config should be valid
+        
+        # Test invalid config
+        config.llm.max_new_tokens = -1
+        errors = config.validate()
+        assert len(errors) > 0
+        assert not config.is_valid()
+    
+    def test_verification_config(self):
+        config = Config()
+        config.verification.enabled = True
+        config.verification.max_retries = 3
+        config.verification.min_passing_score = 0.9
+        
+        errors = config.verification.validate()
+        assert len(errors) == 0
+
+
+class TestVerification:
+    """Tests for Verification system."""
+    
+    def test_verification_result_creation(self):
+        result = VerificationResult(
+            task_id="task_1",
+            status=VerificationStatus.PASSED,
+            score=0.95,
+            summary="All checks passed"
+        )
+        
+        assert result.passed
+        assert result.score == 0.95
+        assert not result.has_critical_issues
+    
+    def test_verification_result_with_issues(self):
+        result = VerificationResult(
+            task_id="task_1",
+            status=VerificationStatus.FAILED,
+            score=0.3,
+            summary="Critical issues found",
+            issues=[
+                VerificationIssue(
+                    severity="critical",
+                    category="missing_file",
+                    description="Required file not found",
+                    remediation="Create the file"
+                ),
+                VerificationIssue(
+                    severity="minor",
+                    category="documentation_missing",
+                    description="README not found",
+                    remediation="Add README.md"
+                )
+            ]
+        )
+        
+        assert not result.passed
+        assert result.has_critical_issues
+        assert len(result.issues) == 2
+    
+    def test_verification_result_to_dict(self):
+        result = VerificationResult(
+            task_id="task_1",
+            status=VerificationStatus.PARTIAL,
+            score=0.6,
+            summary="Partial completion"
+        )
+        
+        data = result.to_dict()
+        assert data["task_id"] == "task_1"
+        assert data["status"] == "partial"
+        assert data["score"] == 0.6
+    
+    def test_verification_issue(self):
+        issue = VerificationIssue(
+            severity="major",
+            category="incorrect_implementation",
+            description="Function returns wrong type",
+            remediation="Change return type to string",
+            file_path="src/utils.py",
+            line_number=42
+        )
+        
+        data = issue.to_dict()
+        assert data["severity"] == "major"
+        assert data["file_path"] == "src/utils.py"
+        assert data["line_number"] == 42
+
+
+class TestLogging:
+    """Tests for Logging system."""
+    
+    def test_logger_creation(self):
+        logger = CounselLogger(name="test", level=LogLevel.DEBUG)
+        assert logger.name == "test"
+    
+    def test_logger_context(self):
+        logger = CounselLogger(name="test_context", level=LogLevel.DEBUG, enable_console=False)
+        logger.set_context(agent_id="agent_1", task_id="task_1")
+        # Context is set without error
+        logger.clear_context()
+    
+    def test_logger_levels(self):
+        logger = CounselLogger(name="test_levels", level=LogLevel.DEBUG, enable_console=False)
+        
+        # These should not raise
+        logger.debug("Debug message")
+        logger.info("Info message")
+        logger.warning("Warning message")
+        logger.error("Error message")
+    
+    def test_logger_metrics(self):
+        logger = CounselLogger(name="test_metrics", level=LogLevel.DEBUG, enable_console=False)
+        
+        # These should not raise
+        logger.metric("execution_time", 150, unit="ms")
+        logger.audit("create", "file", "success")
+        logger.telemetry("task_completed", properties={"task_id": "task_1"})
+
+
+class TestExecutionResult:
+    """Tests for ExecutionResult."""
+    
+    def test_execution_result_verification_summary(self):
+        from counsel import ExecutionResult
+        
+        graph = TaskGraph()
+        graph.add_task("task_1", "Test task")
+        graph.finalize()
+        
+        result = ExecutionResult(
+            success=True,
+            task_graph=graph,
+            verification_results={
+                "task_1": {"status": "passed", "score": 0.9},
+                "task_2": {"status": "failed", "score": 0.3},
+                "task_3": {"status": "partial", "score": 0.6},
+            }
+        )
+        
+        summary = result.get_verification_summary()
+        assert summary["enabled"] == True
+        assert summary["passed"] == 1
+        assert summary["failed"] == 1
+        assert summary["partial"] == 1
+        assert summary["total"] == 3
+    
+    def test_execution_result_files_created(self):
+        from counsel import ExecutionResult, AgentResult
+        
+        graph = TaskGraph()
+        graph.add_task("task_1", "Test task")
+        graph.finalize()
+        
+        agent_result = AgentResult(
+            task_id="task_1",
+            success=True,
+            files_created=["file1.py", "file2.py"]
+        )
+        
+        result = ExecutionResult(
+            success=True,
+            task_graph=graph,
+            results={"task_1": agent_result}
+        )
+        
+        files = result.get_files_created()
+        assert "file1.py" in files
+        assert "file2.py" in files
 
 
 if __name__ == "__main__":

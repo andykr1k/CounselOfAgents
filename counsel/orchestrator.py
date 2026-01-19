@@ -1,9 +1,19 @@
-"""Orchestrator agent for planning and coordinating task execution."""
+"""
+Orchestrator Agent for the Counsel AI Orchestration Platform.
+
+This module provides the central coordination layer for multi-agent task execution.
+It handles task planning, dependency management, parallel execution, and verification.
+
+Key Components:
+    - Orchestrator: Main coordinator class
+    - ExecutionResult: Comprehensive result container
+    - Planning system prompt: LLM-based task decomposition
+"""
 
 import asyncio
 import json
 import re
-from typing import Optional, Dict, Any, Callable, List
+from typing import Optional, Dict, Any, Callable, List, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -12,6 +22,10 @@ from counsel.llm import LLM, Message, get_llm
 from counsel.task_graph import TaskGraph, Task, TaskStatus
 from counsel.agent import AgentPool, AgentResult, DebugCallback
 from counsel.workspace import Workspace, get_workspace
+from counsel.verification import (
+    TaskVerifier, VerificationManager, VerificationResult, VerificationStatus,
+    get_verification_manager
+)
 
 
 PLANNING_SYSTEM_PROMPT = """You are an expert task planner for a multi-agent system. Your job is to break down complex tasks into smaller, executable subtasks with proper dependencies.
@@ -115,33 +129,103 @@ Now analyze and plan the following task:"""
 
 @dataclass
 class ExecutionResult:
-    """Result of executing a task graph."""
+    """
+    Comprehensive result of executing a task graph.
+    
+    Contains:
+        - Overall success/failure status
+        - Task graph with final states
+        - Individual agent results
+        - Verification results (if enabled)
+        - Performance metrics
+        - Error information
+    """
     success: bool
     task_graph: TaskGraph
     results: Dict[str, AgentResult] = field(default_factory=dict)
+    verification_results: Dict[str, Dict] = field(default_factory=dict)
     error: Optional[str] = None
     started_at: str = field(default_factory=lambda: datetime.now().isoformat())
     completed_at: Optional[str] = None
+    
+    # Performance metrics
+    total_duration_ms: int = 0
+    planning_duration_ms: int = 0
+    execution_duration_ms: int = 0
+    verification_duration_ms: int = 0
+    
+    # Retry tracking
+    tasks_retried: List[str] = field(default_factory=list)
+    retry_count: int = 0
     
     def to_dict(self) -> Dict:
         return {
             "success": self.success,
             "task_graph": self.task_graph.to_dict(),
             "results": {k: v.to_dict() for k, v in self.results.items()},
+            "verification_results": self.verification_results,
             "error": self.error,
             "started_at": self.started_at,
-            "completed_at": self.completed_at
+            "completed_at": self.completed_at,
+            "total_duration_ms": self.total_duration_ms,
+            "planning_duration_ms": self.planning_duration_ms,
+            "execution_duration_ms": self.execution_duration_ms,
+            "verification_duration_ms": self.verification_duration_ms,
+            "tasks_retried": self.tasks_retried,
+            "retry_count": self.retry_count
         }
     
     def get_files_created(self) -> List[str]:
+        """Get all files created across all tasks."""
         files = []
         for result in self.results.values():
             files.extend(result.files_created)
         return files
+    
+    def get_verification_summary(self) -> Dict[str, Any]:
+        """Get a summary of verification results."""
+        if not self.verification_results:
+            return {"enabled": False}
+        
+        passed = sum(1 for v in self.verification_results.values() if v.get("status") == "passed")
+        failed = sum(1 for v in self.verification_results.values() if v.get("status") == "failed")
+        partial = sum(1 for v in self.verification_results.values() if v.get("status") == "partial")
+        
+        return {
+            "enabled": True,
+            "passed": passed,
+            "failed": failed,
+            "partial": partial,
+            "total": len(self.verification_results),
+            "pass_rate": passed / len(self.verification_results) if self.verification_results else 0
+        }
 
 
 class Orchestrator:
-    """Main orchestrator that plans and coordinates task execution."""
+    """
+    Main orchestrator that plans and coordinates task execution.
+    
+    The Orchestrator is the central coordinator for the Counsel platform.
+    It provides:
+        - LLM-based task planning and decomposition
+        - Parallel task execution with dependency management
+        - Optional task verification with retry logic
+        - Progress reporting and debugging
+        - Performance metrics collection
+    
+    Usage:
+        orchestrator = Orchestrator(config=config)
+        graph = await orchestrator.plan("Create a Python web app")
+        result = await orchestrator.execute()
+    
+    With verification:
+        result = await orchestrator.execute(verify_tasks=True)
+        if not result.success:
+            # Check verification results
+            for task_id, verification in result.verification_results.items():
+                if verification['status'] == 'failed':
+                    print(f"Task {task_id} failed verification: {verification['summary']}")
+    """
     
     def __init__(
         self,
@@ -149,13 +233,15 @@ class Orchestrator:
         llm: Optional[LLM] = None,
         workspace: Optional[Workspace] = None,
         progress_callback: Optional[Callable[[str, str], None]] = None,
-        debug_callback: Optional[DebugCallback] = None
+        debug_callback: Optional[DebugCallback] = None,
+        verification_manager: Optional[VerificationManager] = None
     ):
         self.config = config or get_config()
         self.llm = llm or get_llm(self.config.llm)
         self.workspace = workspace or get_workspace()
         self.progress_callback = progress_callback
         self.debug_callback = debug_callback
+        self.verification_manager = verification_manager
         self._current_graph: Optional[TaskGraph] = None
     
     def _update_progress(self, status: str, message: str) -> None:
@@ -241,8 +327,24 @@ class Orchestrator:
     async def execute(
         self,
         graph: Optional[TaskGraph] = None,
-        continue_on_failure: Optional[bool] = None
+        continue_on_failure: Optional[bool] = None,
+        verify_tasks: bool = False,
+        max_retries: int = 2
     ) -> ExecutionResult:
+        """
+        Execute the task graph with optional verification and retry logic.
+        
+        Args:
+            graph: Task graph to execute (uses current if not provided)
+            continue_on_failure: Continue executing other tasks if one fails
+            verify_tasks: Enable task verification after completion
+            max_retries: Maximum number of retries for failed verifications
+            
+        Returns:
+            ExecutionResult with comprehensive status and metrics
+        """
+        execution_start = datetime.now()
+        
         graph = graph or self._current_graph
         if not graph:
             raise ValueError("No task graph to execute")
@@ -254,6 +356,10 @@ class Orchestrator:
         )
         
         result = ExecutionResult(success=False, task_graph=graph)
+        
+        # Initialize verification manager if needed
+        if verify_tasks and not self.verification_manager:
+            self.verification_manager = get_verification_manager()
         
         # Track when we last saved to debounce disk writes
         last_save_time = datetime.now()
@@ -270,16 +376,71 @@ class Orchestrator:
         
         completed_results: Dict[str, Any] = {}
         running_tasks: Dict[str, asyncio.Task] = {}  # task_id -> asyncio.Task
+        task_retry_counts: Dict[str, int] = {}  # Track retries per task
         failed = False
         
-        async def run_single_task(task: Task) -> tuple[str, AgentResult]:
+        async def run_single_task(task: Task, retry_context: Optional[str] = None) -> tuple[str, AgentResult]:
             """Run a single task and return its result."""
             context = {}
             for dep_id in task.dependencies:
                 if dep_id in completed_results:
                     context[dep_id] = completed_results[dep_id]
+            
+            # If this is a retry, inject remediation context
+            if retry_context:
+                context['_remediation'] = retry_context
+            
             agent_result = await pool.execute_task(task, context)
             return task.id, agent_result
+        
+        async def verify_and_maybe_retry(task_id: str, agent_result: AgentResult) -> Tuple[bool, Optional[str]]:
+            """
+            Verify a completed task and determine if retry is needed.
+            
+            Returns:
+                (should_retry, remediation_instructions)
+            """
+            if not verify_tasks or not self.verification_manager:
+                return False, None
+            
+            task = graph.get_task(task_id)
+            if not task:
+                return False, None
+            
+            self._update_progress("verifying", f"🔍 Verifying {task_id}...")
+            
+            verification = await self.verification_manager.verify_task(
+                task=task,
+                agent_result=agent_result.result,
+                shell_history=agent_result.shell_history,
+                files_created=agent_result.files_created,
+                files_modified=agent_result.files_modified
+            )
+            
+            # Store verification result
+            result.verification_results[task_id] = verification.to_dict()
+            
+            if verification.passed:
+                self._update_progress("verified", f"✓ {task_id} verified ({verification.score:.0%})")
+                return False, None
+            
+            # Check if we should retry
+            retry_count = task_retry_counts.get(task_id, 0)
+            should_retry = self.verification_manager.should_retry(verification, retry_count)
+            
+            if should_retry:
+                remediation = self.verification_manager.get_remediation_prompt(verification)
+                self._update_progress(
+                    "retry_needed",
+                    f"⚠ {task_id} needs remediation (attempt {retry_count + 1}/{max_retries})"
+                )
+                return True, remediation
+            
+            self._update_progress(
+                "verification_failed",
+                f"✗ {task_id} failed verification: {verification.summary}"
+            )
+            return False, None
         
         # Main execution loop - starts tasks as soon as they're ready
         while not graph.is_complete() and not failed:
@@ -313,6 +474,27 @@ class Orchestrator:
                 result.results[task_id] = agent_result
                 
                 if agent_result.success:
+                    # Verify the task if verification is enabled
+                    should_retry, remediation = await verify_and_maybe_retry(task_id, agent_result)
+                    
+                    if should_retry and remediation:
+                        # Reset task for retry
+                        retry_count = task_retry_counts.get(task_id, 0) + 1
+                        task_retry_counts[task_id] = retry_count
+                        result.tasks_retried.append(task_id)
+                        result.retry_count += 1
+                        
+                        # Re-queue the task with remediation context
+                        task = graph.get_task(task_id)
+                        if task:
+                            task.status = TaskStatus.READY
+                            # Inject remediation into task description
+                            original_desc = task.metadata.get('original_description', task.description)
+                            task.metadata['original_description'] = original_desc
+                            task.description = f"{original_desc}\n\n{remediation}"
+                        continue
+                    
+                    # Task passed (or verification not enabled)
                     graph.mark_completed(task_id, agent_result.result)
                     completed_results[task_id] = agent_result.result
                     self._update_progress("task_done", f"✓ {task_id} completed")
@@ -352,22 +534,64 @@ class Orchestrator:
         result.success = graph.is_successful()
         result.completed_at = datetime.now().isoformat()
         
+        # Calculate execution duration
+        result.execution_duration_ms = int(
+            (datetime.now() - execution_start).total_seconds() * 1000
+        )
+        
         # Final save to ensure last state is persisted
         if self.config.execution.persist_state:
             graph.save(self.config.execution.state_file)
         
         if result.success:
-            self._update_progress("complete", "All tasks completed successfully")
+            verification_summary = result.get_verification_summary()
+            if verification_summary.get("enabled"):
+                self._update_progress(
+                    "complete",
+                    f"All tasks completed and verified ({verification_summary['pass_rate']:.0%} pass rate)"
+                )
+            else:
+                self._update_progress("complete", "All tasks completed successfully")
         else:
             summary = graph.get_summary()
             self._update_progress("complete", f"Finished with {summary['failed']} failed, {summary['blocked']} blocked")
         
         return result
     
-    async def run(self, user_request: str) -> ExecutionResult:
+    async def run(
+        self,
+        user_request: str,
+        verify_tasks: bool = False,
+        max_retries: int = 2
+    ) -> ExecutionResult:
+        """
+        Plan and execute a user request in a single call.
+        
+        Args:
+            user_request: Natural language description of what to do
+            verify_tasks: Enable task verification after completion
+            max_retries: Maximum retries for failed verifications
+            
+        Returns:
+            ExecutionResult with comprehensive status and metrics
+        """
+        total_start = datetime.now()
+        
+        # Planning phase
+        plan_start = datetime.now()
         graph = await self.plan(user_request)
+        planning_duration = int((datetime.now() - plan_start).total_seconds() * 1000)
+        
         self._update_progress("graph", graph.visualize())
-        return await self.execute(graph)
+        
+        # Execution phase
+        result = await self.execute(graph, verify_tasks=verify_tasks, max_retries=max_retries)
+        
+        # Update timing metrics
+        result.planning_duration_ms = planning_duration
+        result.total_duration_ms = int((datetime.now() - total_start).total_seconds() * 1000)
+        
+        return result
     
     def get_current_graph(self) -> Optional[TaskGraph]:
         return self._current_graph

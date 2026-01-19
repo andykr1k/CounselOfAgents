@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""CLI interface for the Agent Orchestration System."""
+"""
+Counsel AI Orchestration Platform - Command Line Interface
+
+Enterprise-grade multi-agent orchestration for automated task execution.
+
+Usage:
+    counsel                           # Interactive shell mode
+    counsel "Create a REST API"       # Single task execution
+    counsel -w ./project "Add tests"  # With specific workspace
+    counsel --verify "Build app"      # With task verification
+
+Environment Variables:
+    COUNSEL_MODEL       HuggingFace model ID
+    COUNSEL_DEVICE      Device (auto, cuda, mps, cpu)
+    COUNSEL_VERIFY      Enable verification by default
+    COUNSEL_DEBUG       Enable debug mode
+"""
 
 import asyncio
 import argparse
@@ -27,7 +43,8 @@ from counsel import (
     Orchestrator, ExecutionResult,
     TaskGraph, TaskStatus,
     Workspace, get_workspace,
-    get_shell
+    get_shell,
+    get_logger, configure_logging, LogLevel
 )
 from counsel.shell import cleanup_shells
 from counsel.llm import cleanup_llm
@@ -38,6 +55,7 @@ from counsel.models import (
     clear_model_selection
 )
 from counsel.jobs import Job, JobStatus, JobManager, get_job_manager
+from counsel.verification import VerificationStatus
 
 console = Console()
 
@@ -525,15 +543,18 @@ def print_banner():
     """Print the welcome banner."""
     banner = """
 ╔═══════════════════════════════════════════════════════════════╗
-║           🤖 Agent Orchestration System                       ║
-║      Multi-agent task execution with shared workspace         ║
+║                    ⚡ COUNSEL AI ⚡                            ║
+║         Enterprise Multi-Agent Orchestration Platform          ║
+║                                                               ║
+║   • LLM-Powered Task Planning    • Automatic Verification     ║
+║   • Parallel Execution           • Self-Correcting Agents     ║
 ╚═══════════════════════════════════════════════════════════════╝
     """
     console.print(Panel(banner, border_style="cyan"))
 
 
 def print_result(result: ExecutionResult, workspace: Workspace):
-    """Print the execution result."""
+    """Print the execution result with verification status."""
     console.print()
     
     if result.success:
@@ -543,6 +564,7 @@ def print_result(result: ExecutionResult, workspace: Workspace):
         if result.error:
             console.print(f"[red]Error: {result.error}[/red]")
     
+    # Task summary table
     summary = result.task_graph.get_summary()
     table = Table(title="Execution Summary", show_header=True, header_style="bold cyan")
     table.add_column("Status", style="cyan")
@@ -553,6 +575,29 @@ def print_result(result: ExecutionResult, workspace: Workspace):
     table.add_row("◌ Blocked", f"[dim]{summary['blocked']}[/dim]")
     
     console.print(table)
+    
+    # Verification summary if enabled
+    verification_summary = result.get_verification_summary()
+    if verification_summary.get("enabled"):
+        console.print()
+        v_table = Table(title="Verification Results", show_header=True, header_style="bold yellow")
+        v_table.add_column("Status", style="yellow")
+        v_table.add_column("Count", justify="right")
+        
+        v_table.add_row("✓ Passed", f"[green]{verification_summary['passed']}[/green]")
+        v_table.add_row("⚠ Partial", f"[yellow]{verification_summary['partial']}[/yellow]")
+        v_table.add_row("✗ Failed", f"[red]{verification_summary['failed']}[/red]")
+        v_table.add_row("Pass Rate", f"[cyan]{verification_summary['pass_rate']:.0%}[/cyan]")
+        
+        console.print(v_table)
+        
+        # Show retry info if any
+        if result.tasks_retried:
+            console.print(f"\n[dim]Tasks retried: {', '.join(result.tasks_retried)} ({result.retry_count} total retries)[/dim]")
+    
+    # Performance metrics
+    if result.total_duration_ms > 0:
+        console.print(f"\n[dim]⏱ Total: {result.total_duration_ms/1000:.1f}s | Planning: {result.planning_duration_ms/1000:.1f}s | Execution: {result.execution_duration_ms/1000:.1f}s[/dim]")
     
     files_created = result.get_files_created()
     if files_created:
@@ -565,7 +610,20 @@ def print_result(result: ExecutionResult, workspace: Workspace):
     console.print("\n[bold]Task Results:[/bold]")
     for task_id, agent_result in result.results.items():
         status = "[green]✓[/green]" if agent_result.success else "[red]✗[/red]"
-        console.print(f"\n{status} [bold]{task_id}[/bold]")
+        
+        # Add verification status if available
+        v_status = ""
+        if task_id in result.verification_results:
+            v_result = result.verification_results[task_id]
+            v_status_value = v_result.get("status", "")
+            if v_status_value == "passed":
+                v_status = " [green]✓ verified[/green]"
+            elif v_status_value == "partial":
+                v_status = f" [yellow]⚠ partial ({v_result.get('score', 0):.0%})[/yellow]"
+            elif v_status_value == "failed":
+                v_status = f" [red]✗ verification failed[/red]"
+        
+        console.print(f"\n{status} [bold]{task_id}[/bold]{v_status}")
         
         if agent_result.result:
             result_text = str(agent_result.result)
@@ -579,6 +637,18 @@ def print_result(result: ExecutionResult, workspace: Workspace):
         
         if agent_result.error:
             console.print(f"  [red]Error: {agent_result.error}[/red]")
+        
+        # Show verification issues if any
+        if task_id in result.verification_results:
+            v_result = result.verification_results[task_id]
+            issues = v_result.get("issues", [])
+            if issues:
+                console.print(f"  [yellow]Issues found:[/yellow]")
+                for issue in issues[:3]:  # Show first 3 issues
+                    severity_icon = {"critical": "🔴", "major": "🟠", "minor": "🟡"}.get(issue.get("severity", ""), "⚪")
+                    console.print(f"    {severity_icon} {issue.get('description', '')[:60]}")
+                if len(issues) > 3:
+                    console.print(f"    [dim]... and {len(issues) - 3} more issues[/dim]")
         
         if agent_result.shell_history:
             console.print(f"  [dim]Commands executed: {len(agent_result.shell_history)}[/dim]")
@@ -608,8 +678,23 @@ def create_status_panel(workspace: Workspace, graph: Optional[TaskGraph] = None)
     return Panel("\n".join(parts), title="[bold]Status[/bold]", border_style="blue")
 
 
-async def run_orchestrated_task(user_request: str, config: Config, workspace: Workspace) -> Optional[ExecutionResult]:
-    """Run an orchestrated task with live progress display and job persistence."""
+async def run_orchestrated_task(
+    user_request: str,
+    config: Config,
+    workspace: Workspace,
+    verify: bool = False,
+    max_retries: int = 2
+) -> Optional[ExecutionResult]:
+    """
+    Run an orchestrated task with live progress display and job persistence.
+    
+    Args:
+        user_request: Natural language task description
+        config: Configuration settings
+        workspace: Workspace for file operations
+        verify: Enable task verification
+        max_retries: Maximum retries for failed verifications
+    """
     
     # Create job for persistence
     job_manager = get_job_manager()
@@ -621,7 +706,7 @@ async def run_orchestrated_task(user_request: str, config: Config, workspace: Wo
     live_display = LiveDisplay(debug=config.debug)
     
     def progress_callback(status: str, message: str):
-        if status in ("task_started", "task_done", "task_failed", "complete"):
+        if status in ("task_started", "task_done", "task_failed", "complete", "verifying", "verified", "verification_failed", "retry_needed"):
             live_display.update_status(message)
             if live_display.graph:
                 live_display.update_graph(live_display.graph)
@@ -638,7 +723,8 @@ async def run_orchestrated_task(user_request: str, config: Config, workspace: Wo
         debug_callback=debug_callback if config.debug else None
     )
     
-    console.print(f"\n[bold cyan]📝 Task:[/bold cyan] {user_request}")
+    verify_str = " [yellow](with verification)[/yellow]" if verify else ""
+    console.print(f"\n[bold cyan]📝 Task:[/bold cyan] {user_request}{verify_str}")
     console.print(f"[dim]Job ID: {job.short_id}[/dim]\n")
     console.print("[dim]Planning...[/dim]")
     
@@ -657,7 +743,10 @@ async def run_orchestrated_task(user_request: str, config: Config, workspace: Wo
         
         # Execute with live display
         with live_display:
-            result = await orchestrator.execute()
+            result = await orchestrator.execute(
+                verify_tasks=verify,
+                max_retries=max_retries
+            )
             live_display.update_status("Complete!")
             await asyncio.sleep(0.3)  # Brief pause to show final state
         
@@ -701,7 +790,7 @@ async def run_orchestrated_task(user_request: str, config: Config, workspace: Wo
         raise
 
 
-async def shell_mode(config: Config, workspace: Workspace):
+async def shell_mode(config: Config, workspace: Workspace, verify_default: bool = False):
     """Interactive shell mode."""
     print_banner()
     
@@ -711,13 +800,17 @@ async def shell_mode(config: Config, workspace: Workspace):
     shell = get_shell()
     shell._cwd = workspace.cwd
     
-    console.print("\n[bold green]✨ Agent Shell Ready[/bold green]")
+    # Track verification mode
+    verify_enabled = verify_default or config.verification.enabled
+    
+    console.print("\n[bold green]✨ Counsel AI Ready[/bold green]")
     console.print("[dim]Commands:[/dim]")
     console.print("  [cyan]!<command>[/cyan]       - Run shell command directly")
     console.print("  [cyan]@status[/cyan]          - Show workspace status")
     console.print("  [cyan]@files[/cyan]           - List workspace files")
     console.print("  [cyan]@history[/cyan]         - Show agent activities")
     console.print("  [cyan]@debug[/cyan]           - Toggle debug mode")
+    console.print("  [cyan]@verify[/cyan]          - Toggle task verification")
     console.print("  [cyan]@model[/cyan]           - Show current model")
     console.print("  [cyan]@jobs[/cyan]            - Show past job history")
     console.print("  [cyan]@delete <id>[/cyan]     - Delete a job by ID")
@@ -725,7 +818,10 @@ async def shell_mode(config: Config, workspace: Workspace):
     console.print("  [cyan]help[/cyan]             - Show examples")
     console.print("  [cyan]exit[/cyan]             - Exit the shell")
     console.print("\n  [dim]Or type a task for agents to execute[/dim]")
-    console.print("  [dim]Use ↑/↓ arrows to navigate command history[/dim]\n")
+    console.print("  [dim]Use ↑/↓ arrows to navigate command history[/dim]")
+    if verify_enabled:
+        console.print("  [yellow]🔍 Task verification is ENABLED[/yellow]")
+    console.print()
     
     while True:
         try:
@@ -802,6 +898,12 @@ async def shell_mode(config: Config, workspace: Workspace):
                         console.print("[yellow]🔍 Debug mode ON - will show agent thinking, shell commands[/yellow]")
                     else:
                         console.print("[dim]Debug mode OFF[/dim]")
+                elif meta_cmd == 'verify':
+                    verify_enabled = not verify_enabled
+                    if verify_enabled:
+                        console.print("[yellow]✓ Task verification ENABLED - tasks will be verified after completion[/yellow]")
+                    else:
+                        console.print("[dim]Task verification disabled[/dim]")
                 elif meta_cmd == 'model':
                     model_info = get_model_by_id(config.llm.model_name)
                     quant = "4bit" if config.llm.load_in_4bit else ("8bit" if config.llm.load_in_8bit else "fp16")
@@ -881,10 +983,17 @@ async def shell_mode(config: Config, workspace: Workspace):
                 console.print("  • [cyan]Create a Python project with a CLI calculator[/cyan]")
                 console.print("  • [cyan]Set up an Express.js server with REST endpoints[/cyan]")
                 console.print("  • [cyan]Create a bash script that monitors disk usage[/cyan]")
+                console.print("\n[bold]Tips:[/bold]")
+                console.print("  • Use [cyan]@verify[/cyan] to toggle automatic task verification")
+                console.print("  • Use [cyan]@debug[/cyan] to see agent reasoning and shell commands")
                 console.print()
                 continue
             
-            result = await run_orchestrated_task(user_input, config, workspace)
+            result = await run_orchestrated_task(
+                user_input, config, workspace,
+                verify=verify_enabled,
+                max_retries=config.verification.max_retries
+            )
             if result is not None:
                 print_result(result, workspace)
             console.print()
@@ -903,11 +1012,20 @@ async def shell_mode(config: Config, workspace: Workspace):
     cleanup_all()
 
 
-async def single_task_mode(user_request: str, config: Config, workspace: Workspace) -> bool:
+async def single_task_mode(
+    user_request: str,
+    config: Config,
+    workspace: Workspace,
+    verify: bool = False
+) -> bool:
     """Run a single task."""
     print_banner()
     try:
-        result = await run_orchestrated_task(user_request, config, workspace)
+        result = await run_orchestrated_task(
+            user_request, config, workspace,
+            verify=verify,
+            max_retries=config.verification.max_retries
+        )
         if result is not None:
             print_result(result, workspace)
             return result.success
@@ -920,16 +1038,24 @@ async def single_task_mode(user_request: str, config: Config, workspace: Workspa
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Agent Orchestration System - Multi-agent task execution",
+        prog="counsel",
+        description="Counsel AI - Enterprise Multi-Agent Orchestration Platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python main.py                                    # Interactive mode (shows model selection on first run)
-    python main.py "Create a Python hello world"     # Single task
-    python main.py -w ./myproject "Set up Express"   # With workspace
-    python main.py --debug "Create a todo app"       # Debug mode (shows agent thinking)
-    python main.py --select-model                    # Change model selection
-    python main.py --list-models                     # List all available models
+    counsel                                    # Interactive mode
+    counsel "Create a Python hello world"     # Single task
+    counsel --verify "Create a REST API"      # With task verification
+    counsel -w ./myproject "Set up Express"   # With workspace
+    counsel --debug "Create a todo app"       # Debug mode
+    counsel --select-model                    # Change model selection
+    counsel --list-models                     # List all available models
+
+Environment Variables:
+    COUNSEL_MODEL       HuggingFace model ID
+    COUNSEL_VERIFY      Enable verification by default
+    COUNSEL_DEBUG       Enable debug mode
+    COUNSEL_LOG_FILE    Path to log file
         """
     )
     
@@ -941,11 +1067,13 @@ Examples:
     parser.add_argument('-w', '--workspace', type=str, default=None, help='Working directory')
     parser.add_argument('-m', '--model', type=str, default=None, help='HuggingFace model')
     parser.add_argument('--device', type=str, choices=['auto', 'cuda', 'mps', 'cpu'], default='auto')
-    parser.add_argument('-p', '--parallel', type=int, default=3, help='Max parallel agents')
+    parser.add_argument('-p', '--parallel', type=int, default=5, help='Max parallel agents (default: 5)')
     parser.add_argument('--no-quantize', action='store_true', help='Disable 4-bit quantization')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
     parser.add_argument('-d', '--debug', action='store_true', help='Debug mode - shows agent thinking and shell commands')
-    parser.add_argument('--continue-on-failure', action='store_true')
+    parser.add_argument('--verify', action='store_true', help='Enable task verification after completion')
+    parser.add_argument('--max-retries', type=int, default=2, help='Maximum retries for failed verifications')
+    parser.add_argument('--continue-on-failure', action='store_true', help='Continue executing other tasks if one fails')
     
     args = parser.parse_args()
     
@@ -1000,10 +1128,22 @@ Examples:
         config.verbose = True
     if args.debug:
         config.debug = True
+    if args.verify:
+        config.verification.enabled = True
+    if args.max_retries:
+        config.verification.max_retries = args.max_retries
     if args.continue_on_failure:
         config.execution.continue_on_failure = True
     if args.workspace:
         config.shell.working_directory = os.path.abspath(args.workspace)
+    
+    # Configure logging based on settings
+    log_level = LogLevel.DEBUG if config.debug else LogLevel.INFO
+    configure_logging(
+        level=log_level,
+        log_file=config.logging.file,
+        json_output=config.logging.json_format
+    )
     
     set_config(config)
     
@@ -1011,9 +1151,11 @@ Examples:
     workspace = get_workspace(workspace_dir)
     
     if args.interactive or not args.task:
-        asyncio.run(shell_mode(config, workspace))
+        asyncio.run(shell_mode(config, workspace, verify_default=args.verify))
     else:
-        success = asyncio.run(single_task_mode(args.task, config, workspace))
+        success = asyncio.run(single_task_mode(
+            args.task, config, workspace, verify=args.verify
+        ))
         sys.exit(0 if success else 1)
 
 
