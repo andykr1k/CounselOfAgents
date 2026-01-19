@@ -144,6 +144,39 @@ class AgentConfig:
 
 
 @dataclass
+class SupervisorConfig:
+    """
+    Configuration for the supervisor/helper system.
+    
+    The supervisor provides guidance when agents get stuck.
+    """
+    
+    # Enable supervisor intervention (ON by default)
+    enabled: bool = True
+    
+    # Number of consecutive failures before automatic intervention
+    failures_before_intervention: int = 2
+    
+    # Number of iterations before checking for stuck patterns
+    min_iterations_before_check: int = 3
+    
+    # Check frequency (every N iterations after min)
+    check_frequency: int = 2
+    
+    # Max help requests per task (to prevent infinite help loops)
+    max_help_per_task: int = 5
+    
+    def validate(self) -> List[str]:
+        """Validate the configuration and return any errors."""
+        errors = []
+        if self.failures_before_intervention < 1:
+            errors.append("failures_before_intervention must be positive")
+        if self.max_help_per_task < 1:
+            errors.append("max_help_per_task must be positive")
+        return errors
+
+
+@dataclass
 class VerificationConfig:
     """
     Configuration for task verification.
@@ -151,8 +184,8 @@ class VerificationConfig:
     Controls automatic verification and retry behavior.
     """
     
-    # Enable task verification
-    enabled: bool = False
+    # Enable task verification (ON by default for reliability)
+    enabled: bool = True
     
     # Maximum retries for failed verifications
     max_retries: int = 2
@@ -260,6 +293,7 @@ class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     verification: VerificationConfig = field(default_factory=VerificationConfig)
+    supervisor: SupervisorConfig = field(default_factory=SupervisorConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     
     # Legacy fields for backward compatibility
@@ -282,6 +316,7 @@ class Config:
         errors.extend(self.agent.validate())
         errors.extend(self.execution.validate())
         errors.extend(self.verification.validate())
+        errors.extend(self.supervisor.validate())
         errors.extend(self.logging.validate())
         return errors
     

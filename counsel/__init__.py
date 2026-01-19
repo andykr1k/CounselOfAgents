@@ -25,7 +25,7 @@ Example:
     )
 """
 
-from counsel.config import Config, get_config, set_config
+from counsel.config import Config, SupervisorConfig, get_config, set_config
 from counsel.orchestrator import Orchestrator, ExecutionResult, run_task
 from counsel.agent import Agent, AgentPool, AgentResult
 from counsel.task_graph import TaskGraph, Task, TaskStatus
@@ -49,13 +49,14 @@ from counsel.logging import (
     LogLevel
 )
 
-__version__ = "1.0.0"
+__version__ = "1.3.0"
 __author__ = "Counsel Of Agents"
 __license__ = "MIT"
 
 __all__ = [
     # Configuration
     "Config",
+    "SupervisorConfig",
     "get_config", 
     "set_config",
     

@@ -158,7 +158,7 @@ class LLM:
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=4096
+            max_length=8192
         )
         
         # Move to device

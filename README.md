@@ -4,7 +4,7 @@
 
 An intelligent orchestration system that breaks down complex tasks into dependency graphs and executes them using self-correcting AI agents with built-in verification.
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/your-org/counsel)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/your-org/counsel)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 
@@ -13,9 +13,11 @@ An intelligent orchestration system that breaks down complex tasks into dependen
 ### Core Capabilities
 - 🤖 **Intelligent Task Decomposition** - LLM-powered breakdown of complex tasks into executable subtasks
 - 📊 **DAG-Based Execution** - Parallel task execution respecting dependencies
-- ✅ **Task Verification** - Automatic verification that tasks were completed correctly
+- ✅ **Task Verification** - Automatic verification that tasks were completed correctly (ON by default)
 - 🔄 **Self-Correcting Agents** - Agents retry with specific remediation when verification fails
-- 🧑‍💼 **Supervisor Intervention** - When agents get stuck, a supervisor provides fresh guidance
+- 🆘 **Smart Help System** - Agents can ask for help (`<help>`) and get supervisor guidance (ON by default)
+- 🧑‍💼 **Automatic Intervention** - When agents get stuck, supervisor automatically provides guidance
+- 📁 **Direct File Operations** - Agents have dedicated tools to read, write, edit, and list files
 
 ### Enterprise Features
 - 📋 **Job Persistence** - All jobs saved to `~/.counsel/jobs/` for history and recovery
@@ -39,14 +41,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### With Task Verification
+### Task Verification (ON by default)
 
 ```bash
-# Enable automatic task verification
-python main.py --verify "Create a REST API with user authentication"
+# Verification is now enabled by default!
+python main.py "Create a REST API with user authentication"
 
-# Or toggle in interactive mode
+# Toggle verification off/on in interactive mode
 projects > @verify
+✓ Task verification DISABLED
+
+projects > @verify  
 ✓ Task verification ENABLED
 ```
 
@@ -173,6 +178,7 @@ Environment Variables:
               │      SHARED WORKSPACE       │
               │  • File Tree (visual)       │
               │  • Agent Activities         │
+              │  • Files Modified Tracking  │
               │  • Shared Variables         │
               └──────────────┬──────────────┘
                              │
@@ -180,6 +186,10 @@ Environment Variables:
          ▼                   ▼                   ▼
    ┌───────────┐       ┌───────────┐       ┌───────────┐
    │  Agent 1  │       │  Agent 2  │       │  Agent 3  │
+   │           │       │           │       │           │
+   │ File Ops: │       │ File Ops: │       │ File Ops: │
+   │ read/write│       │ read/write│       │ read/write│
+   │ edit/list │       │ edit/list │       │ edit/list │
    │  [shell]  │       │  [shell]  │       │  [shell]  │
    │           │       │           │       │           │
    │ Supervisor│       │ Supervisor│       │ Supervisor│
@@ -187,7 +197,100 @@ Environment Variables:
    └───────────┘       └───────────┘       └───────────┘
 ```
 
+## Agent File Operations
+
+Agents have direct file operations tools that are **preferred over shell commands** for file manipulation:
+
+| Tool | Syntax | Use Case |
+|------|--------|----------|
+| **read_file** | `<read_file>path</read_file>` | Read file contents with line numbers |
+| **list_dir** | `<list_dir>path</list_dir>` | List directory contents |
+| **write_file** | `<write_file path="path">content</write_file>` | Create or overwrite a file |
+| **edit_file** | `<edit_file path="path">old\|\|\|new</edit_file>` | Replace specific text in a file |
+| **help** | `<help>description</help>` | Ask supervisor for guidance when stuck |
+
+### Why Direct File Operations?
+
+1. **Reliability** - No shell escaping issues, proper encoding handling
+2. **Visibility** - All file changes are tracked and visible to other agents
+3. **Error handling** - Clear error messages when files don't exist or edits fail
+4. **Line numbers** - When reading files, agents see line numbers for precise editing
+5. **Verification** - Edit operations verify the old text exists before replacing
+
+## Multi-Agent Coordination
+
+Counsel uses a sophisticated coordination system to ensure agents work together effectively:
+
+### Task Dependencies
+When a task depends on another, the agent receives:
+- **Result summary** from the dependency task
+- **Files created** list with paths
+- **Files modified** list with paths
+
+### Workspace Awareness
+Each agent sees:
+- **Refreshed file tree** - Always current, shows files from all agents
+- **Files by agent** - Who created/modified each file
+- **Active agents** - What other agents are working on
+- **Recent activities** - Latest actions across all agents
+- **Task results** - Outcomes from completed tasks with file lists
+
+### Example Flow
+```
+task_1: Create project structure
+  └─ Creates: project/, project/venv/, project/src/
+  
+task_2 (depends on task_1): Write main.py
+  └─ Sees: task_1 created project/, project/src/
+  └─ Reads existing files before writing
+  └─ Creates: project/src/main.py
+  
+task_3 (depends on task_2): Add tests
+  └─ Sees: task_1 and task_2 results + all created files
+  └─ Can import and test the code from task_2
+```
+
+## Help System
+
+Agents have a built-in help system that provides guidance when they get stuck:
+
+### Automatic Intervention
+The supervisor automatically detects when agents are stuck (repeated failures, same errors) and injects guidance into the conversation.
+
+### Explicit Help Requests
+Agents can explicitly ask for help using the `<help>` action:
+```xml
+<help>I'm trying to install dependencies but pip keeps failing with permission errors</help>
+```
+
+### Configuration
+```python
+from counsel import Config, SupervisorConfig
+
+config = Config(
+    supervisor=SupervisorConfig(
+        enabled=True,                      # Enable supervisor (default: True)
+        failures_before_intervention=2,    # Failures before suggesting help
+        max_help_per_task=5,              # Max help requests per task
+    )
+)
+```
+
+### How It Works
+1. **Action Tracking** - All agent actions are tracked for context
+2. **Failure Detection** - Consecutive failures trigger help suggestions
+3. **Automatic Intervention** - After N iterations with failures, supervisor intervenes
+4. **Explicit Help** - Agents can ask `<help>` anytime they're stuck
+5. **Contextual Guidance** - Supervisor sees full action history and provides specific steps
+
 ## Configuration
+
+### Default Configuration (v1.3.0+)
+
+By default, Counsel now ships with production-ready defaults:
+- ✅ **Task Verification** - Enabled by default
+- 🆘 **Supervisor Help** - Enabled by default  
+- 🔍 **Debug Mode** - Enabled by default
 
 ### Production Configuration
 
@@ -197,6 +300,7 @@ from counsel import Config
 config = Config.for_production()
 # Includes:
 # - Task verification enabled
+# - Supervisor help enabled
 # - Optimized model settings
 # - Audit logging enabled
 # - Telemetry enabled

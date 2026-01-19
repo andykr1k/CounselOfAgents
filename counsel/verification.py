@@ -94,7 +94,16 @@ Your job is to analyze:
 1. The original task description (what was supposed to be done)
 2. The agent's reported result (what they claim to have done)
 3. The actual workspace state (what files/outputs exist)
-4. Any shell command history (what commands were run)
+4. Any command/action history (file operations and shell commands)
+
+## Agent Capabilities Context
+
+Agents have access to:
+- **File Operations**: read_file, write_file, edit_file, list_dir
+- **Shell Commands**: For running programs, installing packages, tests
+- **Help System**: Can ask for supervisor guidance when stuck
+
+Files may have been created using `<write_file>` (direct file creation) or shell commands.
 
 ## Your Verification Process
 

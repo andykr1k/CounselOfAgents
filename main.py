@@ -246,7 +246,7 @@ def show_model_selection(config: Config) -> bool:
                     ram_4bit="Unknown",
                     vram_fp16="Unknown",
                     vram_4bit="Unknown",
-                    context_length=4096,
+                    context_length=8192,
                     description="Custom model from HuggingFace",
                     recommended_for=["custom"],
                 )
@@ -458,6 +458,26 @@ class LiveDisplay:
                     lines.append(f"[dim]{ts}[/dim] [bold red]✗ {agent}[/bold red] {msg[:100]}")
                 elif event == 'warn':
                     lines.append(f"[dim]{ts}[/dim] [yellow]⚠ {agent}[/yellow] {msg}")
+                elif event == 'help_request':
+                    lines.append(f"[dim]{ts}[/dim] [bold magenta]🆘 {agent}[/bold magenta] Asking: {msg[:100]}")
+                elif event == 'supervisor':
+                    lines.append(f"[dim]{ts}[/dim] [magenta]🧑‍💼 {agent}[/magenta] {msg[:120]}")
+                elif event == 'read_file':
+                    lines.append(f"[dim]{ts}[/dim] [blue]📖 {agent}[/blue] Reading: {msg}")
+                elif event == 'write_file':
+                    lines.append(f"[dim]{ts}[/dim] [green]✍️ {agent}[/green] Writing: {msg}")
+                elif event == 'edit_file':
+                    lines.append(f"[dim]{ts}[/dim] [yellow]✂️ {agent}[/yellow] Editing: {msg}")
+                elif event == 'list_dir':
+                    lines.append(f"[dim]{ts}[/dim] [blue]📂 {agent}[/blue] Listing: {msg}")
+                elif event == 'file_read':
+                    lines.append(f"[dim]{ts}[/dim] [blue]  ↳ {agent}[/blue] Read OK")
+                elif event == 'file_written':
+                    lines.append(f"[dim]{ts}[/dim] [green]  ↳ {agent}[/green] {msg[:80]}")
+                elif event == 'file_edited':
+                    lines.append(f"[dim]{ts}[/dim] [yellow]  ↳ {agent}[/yellow] {msg[:80]}")
+                elif event == 'file_error':
+                    lines.append(f"[dim]{ts}[/dim] [red]  ↳ {agent}[/red] {msg[:80]}")
                 elif event == 'context':
                     lines.append(f"[dim]{ts}[/dim] [dim]📋 {agent}[/dim] {msg[:80]}")
                 elif event == 'deps':
@@ -542,13 +562,13 @@ def create_graph_tree(graph: TaskGraph) -> Tree:
 def print_banner():
     """Print the welcome banner."""
     banner = """
-╔═══════════════════════════════════════════════════════════════╗
-║                    ⚡ COUNSEL OF AGENTS ⚡                      ║
-║         Enterprise Multi-Agent Orchestration Platform         ║
-║                                                               ║
-║   • LLM-Powered Task Planning    • Automatic Verification     ║
-║   • Parallel Execution           • Self-Correcting Agents     ║
-╚═══════════════════════════════════════════════════════════════╝
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║                    ⚡ COUNSEL OF AGENTS ⚡                    ║
+    ║         Enterprise Multi-Agent Orchestration Platform         ║
+    ║                                                               ║
+    ║   • LLM-Powered Task Planning    • Automatic Verification     ║
+    ║   • Parallel Execution           • Self-Correcting Agents     ║
+    ╚═══════════════════════════════════════════════════════════════╝
     """
     console.print(Panel(banner, border_style="cyan"))
 
@@ -682,8 +702,8 @@ async def run_orchestrated_task(
     user_request: str,
     config: Config,
     workspace: Workspace,
-    verify: bool = False,
-    max_retries: int = 2
+    verify: Optional[bool] = None,
+    max_retries: Optional[int] = None
 ) -> Optional[ExecutionResult]:
     """
     Run an orchestrated task with live progress display and job persistence.
@@ -692,9 +712,14 @@ async def run_orchestrated_task(
         user_request: Natural language task description
         config: Configuration settings
         workspace: Workspace for file operations
-        verify: Enable task verification
-        max_retries: Maximum retries for failed verifications
+        verify: Enable task verification (uses config.verification.enabled if None)
+        max_retries: Maximum retries for failed verifications (uses config if None)
     """
+    # Use config defaults if not specified
+    if verify is None:
+        verify = config.verification.enabled
+    if max_retries is None:
+        max_retries = config.verification.max_retries
     
     # Create job for persistence
     job_manager = get_job_manager()

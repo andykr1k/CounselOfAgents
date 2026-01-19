@@ -35,10 +35,12 @@ This document outlines planned features and improvements for the Counsel Of Agen
   - DuckDuckGo API integration
   - Google Custom Search API option
   - Results summarization
-- [ ] **File Reading** - Dedicated tool to read files intelligently
-  - Read specific line ranges
-  - Search within files
-  - Parse structured files (JSON, YAML, etc.)
+- [x] ~~**File Operations** - Direct file manipulation tools~~ ✅ COMPLETED
+  - Read files with line numbers (`<read_file>`)
+  - Write/create files (`<write_file>`)
+  - Edit files with search/replace (`<edit_file>`)
+  - List directories (`<list_dir>`)
+  - Proper error handling and change tracking
 - [ ] **Code Analysis** - Understand existing codebases
   - AST parsing for Python
   - Dependency analysis
@@ -52,8 +54,9 @@ This document outlines planned features and improvements for the Counsel Of Agen
 
 ### Improved Agent Intelligence
 - [ ] **Learning from Mistakes** - Remember what didn't work in this session
-- [ ] **Pattern Recognition** - Detect common failure patterns earlier
-- [ ] **Better Supervisor** - More intelligent intervention strategies
+- [x] ~~**Pattern Recognition**~~ - Detect common failure patterns earlier (improved in v1.2.0)
+- [x] ~~**Better Supervisor**~~ - More intelligent intervention strategies (v1.2.0)
+- [x] ~~**Multi-Agent Coordination**~~ - Rich dependency context sharing (v1.3.0)
 - [ ] **Context Compression** - Smarter truncation that preserves key information
 - [ ] **Multi-Model Routing** - Use different models for different task types
 - [ ] **Skill-Based Agent Allocation** - Match agents to tasks based on requirements
@@ -65,6 +68,8 @@ This document outlines planned features and improvements for the Counsel Of Agen
 - [ ] **Error Aggregation** - Group similar errors across tasks
 
 ### Enhanced Workspace
+- [x] ~~**File Tree Refresh**~~ - Auto-refresh file tree for agents (v1.3.0)
+- [x] ~~**Task Result Tracking**~~ - Store files created/modified per task (v1.3.0)
 - [ ] **File Watching** - Real-time detection of file changes
 - [ ] **Smart Ignore** - Better filtering of irrelevant files
 - [ ] **Project Templates** - Recognize project types (Python, Node, etc.)
@@ -106,8 +111,37 @@ This document outlines planned features and improvements for the Counsel Of Agen
 - [ ] **Workspace Context Rebuilding** - Gets rebuilt on every call, should cache with invalidation
 - [ ] **File Content Truncation** - Large files may lose important context
 - [ ] **Error Messages** - Some error messages could be more descriptive
+- [ ] **Add --no-verify flag** - Currently no CLI option to disable verification (use @verify in shell)
 
-## ✅ Recently Completed (v1.0.0)
+## ✅ Recently Completed (v1.2.0)
+
+- [x] ~~**Enhanced Help System**~~ - Agents can ask for and receive help
+  - `<help>` action for agents to request guidance
+  - Automatic intervention when stuck is detected
+  - Action tracking for better supervisor context
+  - Configurable via `SupervisorConfig`
+  - Enabled by default for reliability
+- [x] ~~**Verification On by Default**~~ - Task verification now enabled by default
+- [x] ~~**Improved Stuck Detection**~~ - More responsive detection (2 failures instead of 5)
+- [x] ~~**System Integration Fixes**~~ - Made all components work together properly
+  - Orchestrator now passes `SupervisorConfig` to agents
+  - `execute()` and `run()` methods use config defaults
+  - Planning prompt updated to mention file operations
+  - Verification prompt updated for file operations
+  - Debug display shows help requests and file operations
+  - Consistent config propagation throughout the system
+
+## ✅ Completed (v1.1.0)
+
+- [x] ~~**Direct File Operations**~~ - Agents have dedicated file tools
+  - `<read_file>` - Read files with line numbers
+  - `<write_file>` - Create/overwrite files
+  - `<edit_file>` - Search/replace within files
+  - `<list_dir>` - List directory contents
+  - All file changes tracked in workspace
+  - Better visibility of modified files for agent coordination
+
+## ✅ Completed (v1.0.0)
 
 - [x] ~~**Task Verification System**~~ - Automatic verification of task completion
   - LLM-based verification with detailed issue reporting
@@ -173,6 +207,10 @@ counsel/
 elif action_type == "search":
     query = action_content
     results = await self._web_search(query)
+    
+    # Track the action for supervisor context
+    self._track_action("search", query, success=True, result=results[:100])
+    
     self._conversation.append(Message(
         role="user",
         content=f"Search results:\n{results}\n\nContinue with the task."
@@ -183,6 +221,20 @@ async def _web_search(self, query: str) -> str:
     # Implementation here
     pass
 ```
+
+### Help System Architecture
+The help system works through several mechanisms:
+
+1. **Action Tracking** (`_track_action()`): Records all agent actions with success/failure status
+2. **Failure Detection** (`_should_suggest_help()`): Checks if consecutive failures exceed threshold
+3. **Stuck Detection** (`_detect_stuck()`): Looks for repeated commands, errors, or failures
+4. **Supervisor Guidance** (`_get_supervisor_guidance()`): Calls LLM with full context to get help
+5. **Help Action** (`<help>`): Allows agents to explicitly request assistance
+
+Configuration in `SupervisorConfig`:
+- `failures_before_intervention`: How many failures before suggesting help (default: 2)
+- `min_iterations_before_check`: When to start checking for stuck patterns (default: 3)
+- `max_help_per_task`: Maximum help requests per task (default: 5)
 
 ### Adding a New Shell Command
 ```python
@@ -212,8 +264,31 @@ class MyNewConfig:
 my_new: MyNewConfig = field(default_factory=MyNewConfig)
 ```
 
+### Multi-Agent Coordination Architecture
+The coordination system ensures agents know what others have done:
+
+1. **Dependency Context** (orchestrator.py): When a task starts, it receives structured info from dependencies:
+   ```python
+   context[dep_id] = {
+       'result': completed_results[dep_id],
+       'files_created': dep_result.files_created,
+       'files_modified': dep_result.files_modified,
+       'success': dep_result.success
+   }
+   ```
+
+2. **Workspace Context** (workspace.py): Shows refreshed file tree and task results:
+   - Auto-refreshes file tree before each agent starts
+   - Lists files created/modified per task
+   - Shows active agents and recent activities
+
+3. **Agent Prompt** (agent.py): Instructs agents to check dependency context before starting
+
 ## Version History
 
+- **v1.3.0** - Multi-agent coordination: rich dependency context, refreshed file tree, task file tracking
+- **v1.2.0** - Enhanced help system, verification on by default, improved stuck detection
+- **v1.1.0** - Direct file operations (read/write/edit/list), improved file change tracking
 - **v1.0.0** - Task verification, professional logging, configuration validation, metrics
 - **v0.3.0** - Job persistence, debug mode, supervisor intervention
 - **v0.2.0** - Model selection, parallel execution

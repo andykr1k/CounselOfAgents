@@ -42,6 +42,21 @@ Given a high-level task, you must:
 
 {workspace_context}
 
+## Agent Capabilities
+
+Each agent has access to:
+1. **File Operations** (preferred for file work):
+   - `<read_file>` - Read file contents with line numbers
+   - `<write_file>` - Create or overwrite files
+   - `<edit_file>` - Edit specific parts of files
+   - `<list_dir>` - List directory contents
+
+2. **Shell Commands** (for running programs):
+   - `<shell>` - Run commands like `python script.py`, `pip install`, `mkdir dirname`, etc.
+
+3. **Help System** (when stuck):
+   - `<help>` - Request guidance from a supervisor
+
 ## CRITICAL: Agent Environment Limitations
 
 Each agent runs shell commands in **separate subprocesses**. This means:
@@ -328,8 +343,8 @@ class Orchestrator:
         self,
         graph: Optional[TaskGraph] = None,
         continue_on_failure: Optional[bool] = None,
-        verify_tasks: bool = False,
-        max_retries: int = 2
+        verify_tasks: Optional[bool] = None,
+        max_retries: Optional[int] = None
     ) -> ExecutionResult:
         """
         Execute the task graph with optional verification and retry logic.
@@ -337,8 +352,8 @@ class Orchestrator:
         Args:
             graph: Task graph to execute (uses current if not provided)
             continue_on_failure: Continue executing other tasks if one fails
-            verify_tasks: Enable task verification after completion
-            max_retries: Maximum number of retries for failed verifications
+            verify_tasks: Enable task verification (uses config.verification.enabled if not specified)
+            max_retries: Max retries for failed verifications (uses config.verification.max_retries if not specified)
             
         Returns:
             ExecutionResult with comprehensive status and metrics
@@ -349,10 +364,21 @@ class Orchestrator:
         if not graph:
             raise ValueError("No task graph to execute")
         
+        # Use config defaults if not specified
         continue_on_failure = (
             continue_on_failure 
             if continue_on_failure is not None 
             else self.config.execution.continue_on_failure
+        )
+        verify_tasks = (
+            verify_tasks 
+            if verify_tasks is not None 
+            else self.config.verification.enabled
+        )
+        max_retries = (
+            max_retries
+            if max_retries is not None
+            else self.config.verification.max_retries
         )
         
         result = ExecutionResult(success=False, task_graph=graph)
@@ -368,6 +394,7 @@ class Orchestrator:
         pool = AgentPool(
             max_agents=self.config.execution.max_parallel_agents,
             llm=self.llm,
+            supervisor_config=self.config.supervisor,
             workspace=self.workspace,
             debug_callback=self.debug_callback
         )
@@ -384,7 +411,17 @@ class Orchestrator:
             context = {}
             for dep_id in task.dependencies:
                 if dep_id in completed_results:
-                    context[dep_id] = completed_results[dep_id]
+                    # Include both the result text and structured info
+                    dep_result = result.results.get(dep_id)
+                    if dep_result:
+                        context[dep_id] = {
+                            'result': completed_results[dep_id],
+                            'files_created': dep_result.files_created,
+                            'files_modified': dep_result.files_modified,
+                            'success': dep_result.success
+                        }
+                    else:
+                        context[dep_id] = {'result': completed_results[dep_id]}
             
             # If this is a retry, inject remediation context
             if retry_context:
@@ -498,7 +535,17 @@ class Orchestrator:
                     graph.mark_completed(task_id, agent_result.result)
                     completed_results[task_id] = agent_result.result
                     self._update_progress("task_done", f"✓ {task_id} completed")
+                    
+                    # Store comprehensive result in workspace for other agents
                     self.workspace.set_variable(f"result_{task_id}", agent_result.result)
+                    self.workspace.set_variable(f"files_created_{task_id}", agent_result.files_created)
+                    self.workspace.set_variable(f"files_modified_{task_id}", agent_result.files_modified)
+                    
+                    # Log what was accomplished
+                    self.workspace.log_activity(
+                        "orchestrator", task_id, "task_completed",
+                        f"Completed {task_id}: {len(agent_result.files_created)} files created, {len(agent_result.files_modified)} modified"
+                    )
                 else:
                     graph.mark_failed(task_id, agent_result.error or "Unknown error")
                     self._update_progress("task_failed", f"✗ {task_id} failed: {agent_result.error}")
@@ -561,16 +608,16 @@ class Orchestrator:
     async def run(
         self,
         user_request: str,
-        verify_tasks: bool = False,
-        max_retries: int = 2
+        verify_tasks: Optional[bool] = None,
+        max_retries: Optional[int] = None
     ) -> ExecutionResult:
         """
         Plan and execute a user request in a single call.
         
         Args:
             user_request: Natural language description of what to do
-            verify_tasks: Enable task verification after completion
-            max_retries: Maximum retries for failed verifications
+            verify_tasks: Enable task verification (uses config.verification.enabled if not specified)
+            max_retries: Max retries for verifications (uses config.verification.max_retries if not specified)
             
         Returns:
             ExecutionResult with comprehensive status and metrics

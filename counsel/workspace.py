@@ -267,15 +267,40 @@ class Workspace:
         
         return lines
     
-    def get_file_tree(self, max_depth: int = 4) -> str:
-        """Get a visual file tree of the workspace."""
+    def refresh_file_tree(self) -> None:
+        """Rescan the filesystem to update the internal file tree.
+        
+        Call this when you want to ensure the file tree reflects recent changes.
+        """
+        # Clear existing scanned files (but keep agent-registered files)
+        agent_files = {path: info for path, info in self._files.items() 
+                       if info.created_by or info.modified_by}
+        self._files = agent_files
+        self._directories = {self._root_dir}
+        
+        # Rescan
+        self._scan_directory(self._root_dir)
+    
+    def get_file_tree(self, max_depth: int = 4, refresh: bool = False) -> str:
+        """Get a visual file tree of the workspace.
+        
+        Args:
+            max_depth: Maximum depth to traverse
+            refresh: If True, rescan filesystem first
+        """
+        if refresh:
+            self.refresh_file_tree()
+        
         project_name = os.path.basename(self._root_dir)
         lines = [f"{project_name}/"]
         lines.extend(self._generate_file_tree(self._root_dir, max_depth))
         return "\n".join(lines)
     
     def get_context_for_agent(self, task_id: str = "") -> str:
-        """Get a context summary for an agent."""
+        """Get a context summary for an agent.
+        
+        This method refreshes the file tree to ensure agents see the latest state.
+        """
         with self._lock:
             parts = []
             
@@ -288,12 +313,24 @@ class Workspace:
             parts.append("=" * 50)
             parts.append("")
             
-            # File tree - the most important part!
-            parts.append("## File Tree (actual filesystem)")
+            # Refresh and show file tree - ensures agents see latest files
+            parts.append("## File Tree (actual filesystem - refreshed)")
             parts.append("```")
-            parts.append(self.get_file_tree(max_depth=3))
+            parts.append(self.get_file_tree(max_depth=3, refresh=True))
             parts.append("```")
             parts.append("")
+            
+            # Files created/modified by agents (important for coordination)
+            agent_files = [(path, info) for path, info in self._files.items() 
+                          if info.created_by or info.modified_by]
+            if agent_files:
+                parts.append("## Files Created/Modified by Agents:")
+                for path, info in sorted(agent_files, key=lambda x: x[1].modified_at or x[1].created_at or "", reverse=True)[:10]:
+                    if info.created_by:
+                        parts.append(f"  📝 {path} (created by {info.created_by})")
+                    elif info.modified_by:
+                        parts.append(f"  ✏️ {path} (modified by {info.modified_by})")
+                parts.append("")
             
             # Active agents
             if self._active_agents:
@@ -310,14 +347,25 @@ class Workspace:
                     parts.append(f"  • [{activity.agent_id}] {activity.action}: {activity.details[:40]}")
                 parts.append("")
             
-            # Shared results from other tasks
+            # Shared results from other tasks with file info
             task_results = {k: v for k, v in self._variables.items() if k.startswith("result_")}
             if task_results:
                 parts.append("## Results from Completed Tasks:")
                 for key, value in task_results.items():
                     task_name = key.replace("result_", "")
-                    val_str = str(value)[:100]
-                    parts.append(f"  • {task_name}: {val_str}")
+                    val_str = str(value)[:80]
+                    
+                    # Get files created/modified for this task
+                    files_created = self._variables.get(f"files_created_{task_name}", [])
+                    files_modified = self._variables.get(f"files_modified_{task_name}", [])
+                    
+                    parts.append(f"  • **{task_name}**: {val_str}")
+                    if files_created:
+                        parts.append(f"    └─ Created: {', '.join(files_created[:5])}")
+                        if len(files_created) > 5:
+                            parts.append(f"       ... and {len(files_created) - 5} more")
+                    if files_modified:
+                        parts.append(f"    └─ Modified: {', '.join(files_modified[:5])}")
                 parts.append("")
             
             return "\n".join(parts)
