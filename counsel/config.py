@@ -1,5 +1,5 @@
 """
-Configuration Management for the Counsel AI Orchestration Platform.
+Configuration Management for the Counsel Of Agents Orchestration Platform.
 
 This module provides comprehensive configuration for all components of the
 Counsel platform including LLM settings, shell execution, agents, verification,

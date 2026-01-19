@@ -1,5 +1,5 @@
 """
-Orchestrator Agent for the Counsel AI Orchestration Platform.
+Orchestrator Agent for the Counsel Of Agents Orchestration Platform.
 
 This module provides the central coordination layer for multi-agent task execution.
 It handles task planning, dependency management, parallel execution, and verification.

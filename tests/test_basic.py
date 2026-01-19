@@ -1,5 +1,5 @@
 """
-Comprehensive tests for the Counsel AI Orchestration Platform.
+Comprehensive tests for the Counsel Of Agents Orchestration Platform.
 
 Tests cover:
     - Task graph management

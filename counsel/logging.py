@@ -1,5 +1,5 @@
 """
-Professional Logging System for the Counsel AI Orchestration Platform.
+Professional Logging System for the Counsel Of Agents Orchestration Platform.
 
 Provides structured, configurable logging with support for:
 - Multiple output targets (console, file, JSON)

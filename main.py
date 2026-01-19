@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Counsel AI Orchestration Platform - Command Line Interface
+Counsel Of Agents Orchestration Platform - Command Line Interface
 
 Enterprise-grade multi-agent orchestration for automated task execution.
 
@@ -543,8 +543,8 @@ def print_banner():
     """Print the welcome banner."""
     banner = """
 ╔═══════════════════════════════════════════════════════════════╗
-║                    ⚡ COUNSEL AI ⚡                            ║
-║         Enterprise Multi-Agent Orchestration Platform          ║
+║                    ⚡ COUNSEL OF AGENTS ⚡                      ║
+║         Enterprise Multi-Agent Orchestration Platform         ║
 ║                                                               ║
 ║   • LLM-Powered Task Planning    • Automatic Verification     ║
 ║   • Parallel Execution           • Self-Correcting Agents     ║
@@ -803,7 +803,7 @@ async def shell_mode(config: Config, workspace: Workspace, verify_default: bool 
     # Track verification mode
     verify_enabled = verify_default or config.verification.enabled
     
-    console.print("\n[bold green]✨ Counsel AI Ready[/bold green]")
+    console.print("\n[bold green]✨ Counsel Of Agents Ready[/bold green]")
     console.print("[dim]Commands:[/dim]")
     console.print("  [cyan]!<command>[/cyan]       - Run shell command directly")
     console.print("  [cyan]@status[/cyan]          - Show workspace status")
@@ -1039,7 +1039,7 @@ def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         prog="counsel",
-        description="Counsel AI - Enterprise Multi-Agent Orchestration Platform",
+        description="Counsel Of Agents - Enterprise Multi-Agent Orchestration Platform",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

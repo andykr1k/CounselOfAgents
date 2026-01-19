@@ -1,5 +1,5 @@
 """
-Task Verification Agent for the Counsel AI Orchestration Platform.
+Task Verification Agent for the Counsel Of Agents Orchestration Platform.
 
 This module provides intelligent verification of completed tasks to ensure
 they meet their requirements. The verifier analyzes task outputs, checks

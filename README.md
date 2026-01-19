@@ -1,4 +1,4 @@
-# Counsel AI
+# Counsel Of Agents
 
 **Enterprise Multi-Agent Orchestration Platform**
 
@@ -59,10 +59,10 @@ python main.py
 ```
 
 ```
-⚡ COUNSEL AI ⚡
+⚡ Counsel Of Agents ⚡
 Enterprise Multi-Agent Orchestration Platform
 
-✨ Counsel AI Ready
+✨ Counsel Of Agents Ready
 
 Commands:
   !<command>       - Run shell command directly
@@ -349,5 +349,5 @@ MIT License
 
 ---
 
-**Counsel AI** - Enterprise Multi-Agent Orchestration Platform  
+**Counsel Of Agents** - Enterprise Multi-Agent Orchestration Platform  
 Built for reliability. Designed for scale.

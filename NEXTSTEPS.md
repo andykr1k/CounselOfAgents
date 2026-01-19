@@ -1,6 +1,6 @@
-# Counsel AI - Roadmap & Next Steps
+# Counsel Of Agents - Roadmap & Next Steps
 
-This document outlines planned features and improvements for the Counsel AI Orchestration Platform.
+This document outlines planned features and improvements for the Counsel Of Agents Orchestration Platform.
 
 ## 🚀 High Priority
 

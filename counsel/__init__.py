@@ -1,5 +1,5 @@
 """
-Counsel AI Orchestration Platform
+Counsel Of Agents Orchestration Platform
 
 Enterprise-grade multi-agent orchestration system for automated task execution.
 Breaks down complex tasks into dependency graphs and executes them in parallel
@@ -50,7 +50,7 @@ from counsel.logging import (
 )
 
 __version__ = "1.0.0"
-__author__ = "Counsel AI"
+__author__ = "Counsel Of Agents"
 __license__ = "MIT"
 
 __all__ = [
