@@ -12,8 +12,9 @@ from counsel.task_graph import TaskGraph, Task, TaskStatus
 from counsel.workspace import Workspace, get_workspace
 from counsel.llm import LLM, get_llm
 from counsel.shell import Shell, ShellResult, get_shell
+from counsel.jobs import Job, JobStatus, JobManager, JobMessage, get_job_manager
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "Config",
     "get_config", 
@@ -34,4 +35,9 @@ __all__ = [
     "Shell",
     "ShellResult",
     "get_shell",
+    "Job",
+    "JobStatus",
+    "JobManager",
+    "JobMessage",
+    "get_job_manager",
 ]

@@ -53,12 +53,18 @@ class Shell:
     - Timeout handling
     - Working directory management
     - Output truncation
+    - Process tracking for cleanup
     """
+    
+    # Track all active shells for cleanup
+    _active_shells: List["Shell"] = []
     
     def __init__(self, config: Optional[ShellConfig] = None):
         """Initialize the shell."""
         self.config = config or get_config().shell
         self._cwd = self.config.working_directory or os.getcwd()
+        self._active_processes: List[asyncio.subprocess.Process] = []
+        Shell._active_shells.append(self)
     
     @property
     def cwd(self) -> str:
@@ -179,6 +185,9 @@ class Shell:
                 env={**os.environ, "TERM": "dumb"}
             )
             
+            # Track active process
+            self._active_processes.append(process)
+            
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(),
@@ -209,6 +218,11 @@ class Shell:
                     timed_out=True,
                     error="Timeout"
                 )
+            
+            finally:
+                # Remove from active processes
+                if process in self._active_processes:
+                    self._active_processes.remove(process)
                 
         except Exception as e:
             return ShellResult(
@@ -309,8 +323,34 @@ class Shell:
     def pwd(self) -> str:
         """Get current working directory."""
         return self._cwd
+    
+    def cleanup(self) -> None:
+        """Kill any active processes for this shell."""
+        for process in self._active_processes:
+            try:
+                if process.returncode is None:  # Still running
+                    process.kill()
+            except Exception:
+                pass
+        self._active_processes.clear()
+        
+        # Remove from active shells
+        if self in Shell._active_shells:
+            Shell._active_shells.remove(self)
+    
+    @classmethod
+    def cleanup_all(cls) -> None:
+        """Kill all active processes across all shells."""
+        for shell in list(cls._active_shells):
+            shell.cleanup()
+        cls._active_shells.clear()
 
 
 def get_shell(config: Optional[ShellConfig] = None) -> Shell:
     """Get a new shell instance."""
     return Shell(config)
+
+
+def cleanup_shells() -> None:
+    """Cleanup all shell instances and their processes."""
+    Shell.cleanup_all()

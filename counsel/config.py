@@ -113,6 +113,9 @@ class Config:
     verbose: bool = False
     log_file: Optional[str] = None
     
+    # Debug mode - shows agent thinking, LLM responses, shell commands
+    debug: bool = True  # ON by default
+    
     @classmethod
     def from_env(cls) -> "Config":
         """Create config from environment variables."""
@@ -136,6 +139,10 @@ class Config:
         # Verbosity
         if os.getenv("AGENT_VERBOSE", "").lower() in ("1", "true", "yes"):
             config.verbose = True
+        
+        # Debug mode
+        if os.getenv("AGENT_DEBUG", "").lower() in ("1", "true", "yes"):
+            config.debug = True
         
         return config
     

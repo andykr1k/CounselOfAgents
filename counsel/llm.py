@@ -225,6 +225,11 @@ class LLM:
             del self.tokenizer
             self.tokenizer = None
         
+        # Shutdown thread pool
+        if hasattr(self, '_thread_pool') and self._thread_pool is not None:
+            self._thread_pool.shutdown(wait=False, cancel_futures=True)
+            self._thread_pool = None
+        
         try:
             import torch
             if torch.cuda.is_available():
@@ -234,8 +239,18 @@ class LLM:
         
         LLM._instance = None
         self._initialized = False
+    
+    def shutdown(self) -> None:
+        """Alias for unload - clean shutdown of LLM resources."""
+        self.unload()
 
 
 def get_llm(config: Optional[LLMConfig] = None) -> LLM:
     """Get the singleton LLM instance."""
     return LLM(config)
+
+
+def cleanup_llm() -> None:
+    """Cleanup LLM resources if initialized."""
+    if LLM._instance is not None:
+        LLM._instance.unload()

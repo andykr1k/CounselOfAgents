@@ -10,7 +10,7 @@ from datetime import datetime
 from counsel.config import Config, get_config
 from counsel.llm import LLM, Message, get_llm
 from counsel.task_graph import TaskGraph, Task, TaskStatus
-from counsel.agent import AgentPool, AgentResult
+from counsel.agent import AgentPool, AgentResult, DebugCallback
 from counsel.workspace import Workspace, get_workspace
 
 
@@ -27,6 +27,25 @@ Given a high-level task, you must:
 ## Workspace Context
 
 {workspace_context}
+
+## CRITICAL: Agent Environment Limitations
+
+Each agent runs shell commands in **separate subprocesses**. This means:
+- Environment variables DO NOT persist between commands
+- Virtual environment activation DOES NOT persist
+- Shell state (except `cd`) is NOT shared between commands
+
+**DO NOT create separate tasks for:**
+- "Activate virtual environment" (won't persist anyway)
+- "Set environment variables" (won't persist)
+- "Change shell settings"
+
+**Instead, bundle related work together:**
+- "Create venv AND install dependencies" (one task using ./venv/bin/pip)
+- "Write code AND run tests" (can be one task)
+
+**For Python projects, agents should use venv binaries directly:**
+- `./venv/bin/python`, `./venv/bin/pip`, etc.
 
 ## Output Format
 
@@ -57,23 +76,35 @@ You MUST respond with a valid JSON object in this exact format:
 3. **Proper Dependencies**: A task should only depend on tasks whose output it needs
 4. **Parallel When Possible**: Independent tasks should NOT have false dependencies
 5. **Use Existing Files**: Reference existing files/directories from workspace context
+6. **Don't over-decompose**: Simple projects (few files) can be 2-4 tasks, not 10+
+7. **Bundle environment setup**: Venv creation + pip install should be ONE task
 
 ## Examples
 
-Task: "Create a Python project with a hello world script"
+Task: "Create a Python calculator CLI"
 ```json
 {{
-  "analysis": "Need to create directory structure and a simple Python file",
+  "analysis": "Need project structure, calculator code, and entry point",
   "tasks": [
     {{
       "id": "task_1",
-      "description": "Create a new directory called 'hello_project' for the Python project",
+      "description": "Create project directory 'calculator' with a venv and install any needed packages using ./venv/bin/pip",
       "dependencies": []
     }},
     {{
       "id": "task_2",
-      "description": "Create hello.py inside hello_project with print('Hello, World!')",
+      "description": "Create calculator.py with add, subtract, multiply, divide functions",
       "dependencies": ["task_1"]
+    }},
+    {{
+      "id": "task_3",
+      "description": "Create main.py CLI entry point that imports calculator and provides interactive menu",
+      "dependencies": ["task_2"]
+    }},
+    {{
+      "id": "task_4",
+      "description": "Test the calculator by running ./venv/bin/python main.py with sample inputs",
+      "dependencies": ["task_3"]
     }}
   ]
 }}
@@ -117,12 +148,14 @@ class Orchestrator:
         config: Optional[Config] = None,
         llm: Optional[LLM] = None,
         workspace: Optional[Workspace] = None,
-        progress_callback: Optional[Callable[[str, str], None]] = None
+        progress_callback: Optional[Callable[[str, str], None]] = None,
+        debug_callback: Optional[DebugCallback] = None
     ):
         self.config = config or get_config()
         self.llm = llm or get_llm(self.config.llm)
         self.workspace = workspace or get_workspace()
         self.progress_callback = progress_callback
+        self.debug_callback = debug_callback
         self._current_graph: Optional[TaskGraph] = None
     
     def _update_progress(self, status: str, message: str) -> None:
@@ -222,41 +255,61 @@ class Orchestrator:
         
         result = ExecutionResult(success=False, task_graph=graph)
         
+        # Track when we last saved to debounce disk writes
+        last_save_time = datetime.now()
+        save_interval_seconds = 5  # Only save every 5 seconds at most
+        
         pool = AgentPool(
             max_agents=self.config.execution.max_parallel_agents,
             llm=self.llm,
-            workspace=self.workspace
+            workspace=self.workspace,
+            debug_callback=self.debug_callback
         )
         
         self._update_progress("executing", "Starting task execution...")
         
         completed_results: Dict[str, Any] = {}
+        running_tasks: Dict[str, asyncio.Task] = {}  # task_id -> asyncio.Task
+        failed = False
         
-        while not graph.is_complete():
+        async def run_single_task(task: Task) -> tuple[str, AgentResult]:
+            """Run a single task and return its result."""
+            context = {}
+            for dep_id in task.dependencies:
+                if dep_id in completed_results:
+                    context[dep_id] = completed_results[dep_id]
+            agent_result = await pool.execute_task(task, context)
+            return task.id, agent_result
+        
+        # Main execution loop - starts tasks as soon as they're ready
+        while not graph.is_complete() and not failed:
+            # Start any newly ready tasks
             ready_tasks = graph.get_ready_tasks()
-            
-            if not ready_tasks:
-                if not any(t.status == TaskStatus.RUNNING for t in graph.tasks.values()):
-                    break
-                await asyncio.sleep(0.1)
-                continue
-            
-            self._update_progress("executing", f"Running {len(ready_tasks)} task(s) in parallel...")
-            
             for task in ready_tasks:
-                graph.mark_running(task.id)
+                if task.id not in running_tasks:
+                    graph.mark_running(task.id)
+                    total_running = sum(1 for t in graph.tasks.values() if t.status == TaskStatus.RUNNING)
+                    self._update_progress("task_started", f"▶ Starting {task.id} ({total_running} running)")
+                    # Create task and start it immediately
+                    running_tasks[task.id] = asyncio.create_task(run_single_task(task))
             
-            contexts: Dict[str, Dict[str, Any]] = {}
-            for task in ready_tasks:
-                task_context = {}
-                for dep_id in task.dependencies:
-                    if dep_id in completed_results:
-                        task_context[dep_id] = completed_results[dep_id]
-                contexts[task.id] = task_context
+            if not running_tasks:
+                # No tasks running and none ready - we're done or stuck
+                break
             
-            task_results = await pool.execute_tasks(ready_tasks, contexts)
+            # Wait for ANY task to complete (not all of them)
+            done, pending = await asyncio.wait(
+                running_tasks.values(),
+                return_when=asyncio.FIRST_COMPLETED
+            )
             
-            for task_id, agent_result in task_results.items():
+            # Process completed tasks
+            for completed_task in done:
+                task_id, agent_result = await completed_task
+                
+                # Remove from running
+                del running_tasks[task_id]
+                
                 result.results[task_id] = agent_result
                 
                 if agent_result.success:
@@ -270,21 +323,44 @@ class Orchestrator:
                     
                     if not continue_on_failure:
                         result.error = f"Task {task_id} failed: {agent_result.error}"
-                        result.completed_at = datetime.now().isoformat()
-                        return result
+                        failed = True
+                        # Cancel remaining tasks
+                        for remaining in running_tasks.values():
+                            remaining.cancel()
+                        break
             
-            if self.config.execution.persist_state:
-                graph.save(self.config.execution.state_file)
+            # Debounced save - only write to disk every few seconds
+            if self.config.execution.persist_state and not failed:
+                now = datetime.now()
+                if (now - last_save_time).total_seconds() >= save_interval_seconds:
+                    graph.save(self.config.execution.state_file)
+                    last_save_time = now
+        
+        # Wait for any remaining tasks if we didn't fail
+        if running_tasks and not failed:
+            remaining_results = await asyncio.gather(*running_tasks.values(), return_exceptions=True)
+            for res in remaining_results:
+                if isinstance(res, tuple):
+                    task_id, agent_result = res
+                    result.results[task_id] = agent_result
+                    if agent_result.success:
+                        graph.mark_completed(task_id, agent_result.result)
+                        self._update_progress("task_done", f"✓ {task_id} completed")
+                    else:
+                        graph.mark_failed(task_id, agent_result.error or "Unknown error")
         
         result.success = graph.is_successful()
         result.completed_at = datetime.now().isoformat()
         
+        # Final save to ensure last state is persisted
+        if self.config.execution.persist_state:
+            graph.save(self.config.execution.state_file)
+        
         if result.success:
             self._update_progress("complete", "All tasks completed successfully")
         else:
-            failed = graph.get_summary()["failed"]
-            blocked = graph.get_summary()["blocked"]
-            self._update_progress("complete", f"Finished with {failed} failed, {blocked} blocked")
+            summary = graph.get_summary()
+            self._update_progress("complete", f"Finished with {summary['failed']} failed, {summary['blocked']} blocked")
         
         return result
     
