@@ -217,49 +217,107 @@ class Workspace:
         with self._lock:
             return self._activities[-limit:]
     
+    def _generate_file_tree(self, root: str, max_depth: int = 4, prefix: str = "") -> List[str]:
+        """Generate a visual file tree representation."""
+        lines = []
+        
+        try:
+            items = sorted(os.listdir(root))
+        except (PermissionError, FileNotFoundError):
+            return lines
+        
+        # Filter out common non-essential items
+        skip_items = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', 
+                      '.pytest_cache', '.mypy_cache', '.tox', 'dist', 'build',
+                      '.egg-info', '*.pyc', '.DS_Store', '.env'}
+        
+        items = [i for i in items if i not in skip_items and not i.endswith('.pyc')]
+        
+        # Separate dirs and files
+        dirs = []
+        files = []
+        for item in items:
+            full_path = os.path.join(root, item)
+            if os.path.isdir(full_path):
+                dirs.append(item)
+            else:
+                files.append(item)
+        
+        all_items = dirs + files
+        
+        for i, item in enumerate(all_items):
+            is_last = (i == len(all_items) - 1)
+            connector = "└── " if is_last else "├── "
+            full_path = os.path.join(root, item)
+            
+            if os.path.isdir(full_path):
+                lines.append(f"{prefix}{connector}{item}/")
+                if max_depth > 1:
+                    extension = "    " if is_last else "│   "
+                    lines.extend(self._generate_file_tree(full_path, max_depth - 1, prefix + extension))
+            else:
+                # Mark files created by agents
+                rel_path = os.path.relpath(full_path, self._root_dir)
+                marker = ""
+                if rel_path in self._files:
+                    info = self._files[rel_path]
+                    if info.created_by:
+                        marker = f" ← created by {info.created_by}"
+                lines.append(f"{prefix}{connector}{item}{marker}")
+        
+        return lines
+    
+    def get_file_tree(self, max_depth: int = 4) -> str:
+        """Get a visual file tree of the workspace."""
+        project_name = os.path.basename(self._root_dir)
+        lines = [f"{project_name}/"]
+        lines.extend(self._generate_file_tree(self._root_dir, max_depth))
+        return "\n".join(lines)
+    
     def get_context_for_agent(self, task_id: str = "") -> str:
         """Get a context summary for an agent."""
         with self._lock:
             parts = []
             
-            parts.append("## Project Structure")
-            parts.append(f"Root: {self._root_dir}")
-            parts.append(f"Current directory: {self._cwd}")
+            # Clear header with location
+            project_name = os.path.basename(self._root_dir)
+            parts.append("=" * 50)
+            parts.append(f"PROJECT: {project_name}")
+            parts.append(f"ROOT PATH: {self._root_dir}")
+            parts.append(f"CURRENT DIRECTORY: {self._cwd}")
+            parts.append("=" * 50)
             parts.append("")
             
-            if self._files:
-                parts.append("### Files in workspace:")
-                for path, info in sorted(self._files.items())[:30]:
-                    creator = f" (by {info.created_by})" if info.created_by else ""
-                    parts.append(f"  - {path}{creator}")
-                if len(self._files) > 30:
-                    parts.append(f"  ... and {len(self._files) - 30} more files")
-                parts.append("")
+            # File tree - the most important part!
+            parts.append("## File Tree (actual filesystem)")
+            parts.append("```")
+            parts.append(self.get_file_tree(max_depth=3))
+            parts.append("```")
+            parts.append("")
             
-            if self._directories:
-                parts.append("### Directories:")
-                for dir_path in sorted(self._directories)[:20]:
-                    parts.append(f"  - {dir_path}/")
-                parts.append("")
-            
+            # Active agents
             if self._active_agents:
-                parts.append("### Other agents currently working:")
+                parts.append("## Other Agents Working Now:")
                 for agent_id, task_desc in self._active_agents.items():
-                    parts.append(f"  - {agent_id}: {task_desc[:60]}...")
+                    parts.append(f"  • {agent_id}: {task_desc[:60]}...")
                 parts.append("")
             
-            recent = self._activities[-10:]
+            # Recent activities - shorter list
+            recent = self._activities[-5:]
             if recent:
-                parts.append("### Recent activities:")
+                parts.append("## Recent Activities:")
                 for activity in recent:
-                    parts.append(f"  - [{activity.agent_id}] {activity.action}: {activity.details[:50]}")
+                    parts.append(f"  • [{activity.agent_id}] {activity.action}: {activity.details[:40]}")
                 parts.append("")
             
-            if self._variables:
-                parts.append("### Shared context:")
-                for key, value in self._variables.items():
-                    val_str = str(value)[:50]
-                    parts.append(f"  - {key}: {val_str}")
+            # Shared results from other tasks
+            task_results = {k: v for k, v in self._variables.items() if k.startswith("result_")}
+            if task_results:
+                parts.append("## Results from Completed Tasks:")
+                for key, value in task_results.items():
+                    task_name = key.replace("result_", "")
+                    val_str = str(value)[:100]
+                    parts.append(f"  • {task_name}: {val_str}")
                 parts.append("")
             
             return "\n".join(parts)
