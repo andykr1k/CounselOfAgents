@@ -199,7 +199,7 @@ class TestConfig:
     
     def test_default_config(self):
         config = Config()
-        assert config.llm.model_name == "Qwen/Qwen2.5-7B-Instruct"
+        assert config.llm.model_name == "Qwen/Qwen2.5-14B-Instruct"
         assert config.execution.max_parallel_agents == 5
     
     def test_testing_config(self):

@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   counsel-agents:
@@ -19,17 +19,23 @@ services:
       - AGENT_VERBOSE=1
       - CUDA_VISIBLE_DEVICES=0
       # Use larger model with GPU
-      - AGENT_LLM_MODEL=Qwen/Qwen2.5-7B-Instruct
+      - AGENT_LLM_MODEL=Qwen/Qwen2.5-14B-Instruct
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [ gpu ]
+              capabilities: [gpu]
     # Health check to verify GPU access
     healthcheck:
-      test: [ "CMD", "python", "-c", "import torch; assert torch.cuda.is_available()" ]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import torch; assert torch.cuda.is_available()",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

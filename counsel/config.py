@@ -34,7 +34,7 @@ class LLMConfig:
     """
     
     # Model settings
-    model_name: str = "Qwen/Qwen2.5-7B-Instruct"
+    model_name: str = "Qwen/Qwen2.5-14B-Instruct"
     device: str = "auto"  # "auto", "cuda", "mps", "cpu"
     
     # Generation settings
@@ -393,7 +393,7 @@ class Config:
         """Create a production-optimized config."""
         return cls(
             llm=LLMConfig(
-                model_name="Qwen/Qwen2.5-7B-Instruct",
+                model_name="Qwen/Qwen2.5-14B-Instruct",
                 load_in_4bit=True,
                 temperature=0.5,  # Lower for more consistent output
             ),

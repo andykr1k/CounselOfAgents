@@ -331,7 +331,7 @@ config = Config(
 ### Environment Variables
 
 ```bash
-export COUNSEL_MODEL="Qwen/Qwen2.5-7B-Instruct"
+export COUNSEL_MODEL="Qwen/Qwen2.5-14B-Instruct"
 export COUNSEL_DEVICE="cuda"
 export COUNSEL_VERIFY="true"
 export COUNSEL_MAX_PARALLEL=5
@@ -344,7 +344,7 @@ export COUNSEL_LOG_LEVEL="INFO"
 | Model | Size | VRAM (4-bit) | Best For |
 |-------|------|--------------|----------|
 | `Qwen/Qwen2.5-1.5B-Instruct` | 1.5B | ~1.5 GB | Testing, simple tasks |
-| `Qwen/Qwen2.5-7B-Instruct` | 7B | ~5 GB | General use ⭐ |
+| `Qwen/Qwen2.5-14B-Instruct` | 7B | ~5 GB | General use ⭐ |
 | `Qwen/Qwen2.5-Coder-7B-Instruct` | 7B | ~5 GB | Code-heavy tasks ⭐ |
 | `Qwen/Qwen2.5-14B-Instruct` | 14B | ~9 GB | Complex reasoning |
 | `meta-llama/Llama-3.2-3B-Instruct` | 3B | ~2.5 GB | Long context (128k) |
