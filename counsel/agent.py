@@ -76,28 +76,38 @@ NEW_TEXT_TO_REPLACE_WITH
 </edit_file>
    NOTE: OLD_TEXT must match exactly (including whitespace). Include enough context to be unique.
 
+5. **Search files** - Find text across the workspace (optionally limit path):
+   <search_files>pattern|||relative/path(optional)|||regex|literal(optional)</search_files>
+
+6. **Delete a file** - Remove a file:
+   <delete_file>path/to/file.py</delete_file>
+
 ### Shell Commands (for running programs, installing packages, etc.)
 
-5. **Run a shell command**:
+7. **Run a shell command**:
    <shell>command here</shell>
 
 ### Control Actions
 
-6. **Think/reason about the task**:
+8. **Think/reason about the task**:
    <think>your reasoning here</think>
 
-7. **Ask for help when stuck** ⭐ IMPORTANT:
+9. **Ask for help when stuck** ⭐ IMPORTANT:
    <help>description of what you're trying to do and what's not working</help>
    
-8. **Mark task complete with result**:
+10. **Mark task complete with result**:
    <done>final result or summary</done>
 
-9. **Report an error if task cannot be completed**:
+11. **Report an error if task cannot be completed**:
    <error>description of what went wrong</error>
 
 ## Workspace Context
 
 {workspace_context}
+
+## Default Project Location
+
+Unless the task explicitly specifies another location, create new project folders under the workspace root (by default this is the `projects/` directory).
 
 ## CRITICAL: Ask for Help When Stuck! ⭐
 
@@ -120,6 +130,8 @@ A supervisor will provide specific guidance to help you succeed.
 - Viewing directory structure → <list_dir>
 - Creating new files → <write_file>
 - Editing existing files → <edit_file> or <write_file>
+- Searching content → <search_files>
+- Deleting files → <delete_file>
 
 **USE SHELL COMMANDS FOR:**
 - Running programs: `python script.py`, `npm start`
@@ -400,6 +412,16 @@ Start your response directly with the guidance."""
         list_match = re.search(r"<list_dir>(.*?)</list_dir>", response, re.DOTALL | re.IGNORECASE)
         if list_match:
             return "list_dir", list_match.group(1).strip()
+
+        # search_files: <search_files>pattern</search_files>
+        search_match = re.search(r"<search_files>(.*?)</search_files>", response, re.DOTALL | re.IGNORECASE)
+        if search_match:
+            return "search_files", search_match.group(1).strip()
+
+        # delete_file: <delete_file>path</delete_file>
+        delete_match = re.search(r"<delete_file>(.*?)</delete_file>", response, re.DOTALL | re.IGNORECASE)
+        if delete_match:
+            return "delete_file", delete_match.group(1).strip()
         
         # write_file: <write_file path="...">content</write_file>
         write_match = re.search(
@@ -460,6 +482,21 @@ Start your response directly with the guidance."""
         if os.path.isabs(path):
             return path
         return os.path.normpath(os.path.join(self.shell.cwd, path))
+
+    def _is_within_workspace(self, path: str) -> bool:
+        """Check if a path is inside the workspace root."""
+        workspace_root = os.path.abspath(self.workspace.root_dir)
+        target = os.path.abspath(path)
+        try:
+            return os.path.commonpath([workspace_root, target]) == workspace_root
+        except ValueError:
+            return False
+
+    def _ensure_within_workspace(self, path: str) -> tuple[bool, str]:
+        """Guard against accessing paths outside the workspace."""
+        if self._is_within_workspace(path):
+            return True, ""
+        return False, f"Refusing to access outside workspace: {path}"
     
     def _read_file(self, path: str, max_lines: int = 2000) -> tuple[bool, str]:
         """Read a file and return contents with line numbers.
@@ -467,6 +504,10 @@ Start your response directly with the guidance."""
         Returns (success, content_or_error)
         """
         full_path = self._resolve_path(path)
+
+        ok, message = self._ensure_within_workspace(full_path)
+        if not ok:
+            return False, message
         
         if not os.path.exists(full_path):
             return False, f"File not found: {path}"
@@ -514,6 +555,10 @@ Start your response directly with the guidance."""
         Returns (success, content_or_error)
         """
         full_path = self._resolve_path(path)
+
+        ok, message = self._ensure_within_workspace(full_path)
+        if not ok:
+            return False, message
         
         if not os.path.exists(full_path):
             return False, f"Directory not found: {path}"
@@ -569,13 +614,91 @@ Start your response directly with the guidance."""
             
         except Exception as e:
             return False, f"Error listing directory: {str(e)}"
-    
-    def _write_file(self, path: str, content: str) -> tuple[bool, str]:
+
+    def _search_files(self, query: str, max_results: int = 200) -> tuple[bool, str]:
+        """Search for text in files under the workspace.
+
+        Query format: pattern|||relative/path(optional)|||regex|literal(optional)
+        """
+        if not query:
+            return False, "Search pattern is required."
+
+        parts = [p.strip() for p in query.split("|||")]
+        pattern = parts[0]
+        search_root = self.workspace.root_dir
+        mode = "regex"
+        if len(parts) >= 2 and parts[1]:
+            search_root = self._resolve_path(parts[1])
+        if len(parts) >= 3 and parts[2]:
+            mode = parts[2].lower()
+
+        if not os.path.exists(search_root):
+            return False, f"Search path not found: {search_root}"
+
+        ok, message = self._ensure_within_workspace(search_root)
+        if not ok:
+            return False, message
+
+        use_regex = mode != "literal"
+        try:
+            compiled = re.compile(pattern, re.IGNORECASE) if use_regex else None
+        except re.error as e:
+            return False, f"Invalid regex pattern: {e}"
+
+        results = []
+        scanned_files = 0
+        skip_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv',
+                     '.pytest_cache', '.mypy_cache', '.tox', 'dist', 'build'}
+
+        def scan_file(full_path: str) -> bool:
+            nonlocal scanned_files
+            scanned_files += 1
+            rel_path = os.path.relpath(full_path, self.workspace.root_dir)
+            try:
+                with open(full_path, 'r', encoding='utf-8', errors='replace') as f:
+                    for line_num, line in enumerate(f, 1):
+                        haystack = line
+                        matched = compiled.search(haystack) if use_regex else (pattern in haystack)
+                        if matched:
+                            results.append(f"{rel_path}:{line_num}: {line.rstrip()}")
+                            if len(results) >= max_results:
+                                return True
+            except Exception:
+                return False
+            return False
+
+        if os.path.isfile(search_root):
+            scan_file(search_root)
+        else:
+            for root, dirs, files in os.walk(search_root):
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
+                for fname in files:
+                    if fname.endswith(('.pyc', '.pyo')) or fname.startswith('.'):
+                        continue
+                    if scan_file(os.path.join(root, fname)):
+                        break
+                if len(results) >= max_results:
+                    break
+
+        if not results:
+            return True, f"No matches found for '{pattern}'. Scanned {scanned_files} files."
+
+        header = f"Found {len(results)} matches (scanned {scanned_files} files):"
+        return True, header + "\n" + "\n".join(results)
+
+    def _write_file(self, path: str, content: str) -> tuple[bool, str, bool]:
         """Write content to a file (creates or overwrites).
         
-        Returns (success, message)
+        Returns (success, message, is_new)
         """
         full_path = self._resolve_path(path)
+
+        ok, message = self._ensure_within_workspace(full_path)
+        if not ok:
+            return False, message, False
+
+        if not self.config.can_create_files and not os.path.exists(full_path):
+            return False, f"File creation is disabled by configuration: {path}", False
         
         try:
             # Create parent directories if needed
@@ -594,10 +717,10 @@ Start your response directly with the guidance."""
             line_count = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
             
             action = "Created" if is_new else "Updated"
-            return True, f"{action} file: {path} ({line_count} lines, {len(content)} bytes)"
+            return True, f"{action} file: {path} ({line_count} lines, {len(content)} bytes)", is_new
             
         except Exception as e:
-            return False, f"Error writing file: {str(e)}"
+            return False, f"Error writing file: {str(e)}", False
     
     def _edit_file(self, path: str, old_text: str, new_text: str) -> tuple[bool, str]:
         """Edit a file by replacing old_text with new_text.
@@ -605,6 +728,10 @@ Start your response directly with the guidance."""
         Returns (success, message)
         """
         full_path = self._resolve_path(path)
+
+        ok, message = self._ensure_within_workspace(full_path)
+        if not ok:
+            return False, message
         
         if not os.path.exists(full_path):
             return False, f"File not found: {path}"
@@ -655,6 +782,29 @@ Start your response directly with the guidance."""
             
         except Exception as e:
             return False, f"Error editing file: {str(e)}"
+
+    def _delete_file(self, path: str) -> tuple[bool, str]:
+        """Delete a file from the workspace."""
+        full_path = self._resolve_path(path)
+
+        if not self.config.can_delete_files:
+            return False, f"File deletion is disabled by configuration: {path}"
+
+        ok, message = self._ensure_within_workspace(full_path)
+        if not ok:
+            return False, message
+
+        if not os.path.exists(full_path):
+            return False, f"File not found: {path}"
+
+        if not os.path.isfile(full_path):
+            return False, f"Not a file: {path}"
+
+        try:
+            os.remove(full_path)
+            return True, f"Deleted file: {path}"
+        except Exception as e:
+            return False, f"Error deleting file: {str(e)}"
     
     def _detect_file_operations(self, command: str, result: ShellResult) -> tuple[List[str], List[str]]:
         """Detect files created/modified by a command. Best-effort heuristic."""
@@ -885,13 +1035,15 @@ Please try a DIFFERENT approach based on this guidance. If you're still stuck af
                     for file_path in created:
                         full_path = os.path.join(self.shell.cwd, file_path)
                         self.workspace.register_file(full_path, self.agent_id)
-                        result.files_created.append(file_path)
+                        rel_path = os.path.relpath(full_path, self.workspace.root_dir)
+                        result.files_created.append(rel_path)
                         self._debug("file_created", file_path)
                     
                     for file_path in modified:
                         full_path = os.path.join(self.shell.cwd, file_path)
                         self.workspace.register_file(full_path, self.agent_id, is_modification=True)
-                        result.files_modified.append(file_path)
+                        rel_path = os.path.relpath(full_path, self.workspace.root_dir)
+                        result.files_modified.append(rel_path)
                         self._debug("file_modified", file_path)
                     
                     result.shell_history.append({
@@ -992,15 +1144,22 @@ Please try a DIFFERENT approach based on this guidance. If you're still stuck af
                         content = content[1:]
                     
                     self._debug("write_file", f"Writing: {file_path}")
-                    success, message = self._write_file(file_path, content)
+                    success, message, is_new = self._write_file(file_path, content)
                     
                     # Track action
                     self._track_action("write_file", file_path, success, message[:100])
                     
                     if success:
                         full_path = self._resolve_path(file_path)
-                        self.workspace.register_file(full_path, self.agent_id)
-                        result.files_created.append(file_path)
+                        if is_new:
+                            self.workspace.register_file(full_path, self.agent_id)
+                            rel_path = os.path.relpath(full_path, self.workspace.root_dir)
+                            result.files_created.append(rel_path)
+                        else:
+                            self.workspace.register_file(full_path, self.agent_id, is_modification=True)
+                            rel_path = os.path.relpath(full_path, self.workspace.root_dir)
+                            if rel_path not in result.files_modified:
+                                result.files_modified.append(rel_path)
                         self._debug("file_written", message)
                         self.workspace.log_activity(
                             self.agent_id, task.id, "write_file",
@@ -1060,8 +1219,9 @@ Please try a DIFFERENT approach based on this guidance. If you're still stuck af
                     if success:
                         full_path = self._resolve_path(file_path)
                         self.workspace.register_file(full_path, self.agent_id, is_modification=True)
-                        if file_path not in result.files_modified:
-                            result.files_modified.append(file_path)
+                        rel_path = os.path.relpath(full_path, self.workspace.root_dir)
+                        if rel_path not in result.files_modified:
+                            result.files_modified.append(rel_path)
                         self._debug("file_edited", message)
                         self.workspace.log_activity(
                             self.agent_id, task.id, "edit_file",
@@ -1075,6 +1235,62 @@ Please try a DIFFERENT approach based on this guidance. If you're still stuck af
                     if not success and self._should_suggest_help():
                         help_hint = "\n\n💡 **Tip:** Edit failed. Use `<read_file>` to see actual file contents, or `<help>what you're trying to do</help>` for guidance."
                     
+                    self._conversation.append(Message(
+                        role="user",
+                        content=f"{message}{help_hint}\n\nContinue with the task."
+                    ))
+
+                elif action_type == "search_files":
+                    query = action_content
+                    self._debug("search_files", query[:120])
+                    success, content = self._search_files(query)
+
+                    # Track action
+                    self._track_action("search_files", query, success, content[:100] if not success else "OK")
+
+                    if success:
+                        self.workspace.log_activity(
+                            self.agent_id, task.id, "search_files",
+                            f"Searched: {query[:60]}"
+                        )
+                    else:
+                        self._debug("file_error", content)
+                        recent_errors.append(content[:300])
+
+                    self._conversation.append(Message(
+                        role="user",
+                        content=f"{content}\n\nContinue with the task."
+                    ))
+
+                elif action_type == "delete_file":
+                    file_path = action_content
+                    self._debug("delete_file", f"Deleting: {file_path}")
+                    success, message = self._delete_file(file_path)
+
+                    # Track action
+                    self._track_action("delete_file", file_path, success, message[:100])
+
+                    if success:
+                        full_path = self._resolve_path(file_path)
+                        rel_path = os.path.relpath(full_path, self.workspace.root_dir)
+                        self.workspace.remove_file(full_path)
+                        if rel_path in result.files_created:
+                            result.files_created.remove(rel_path)
+                        if rel_path in result.files_modified:
+                            result.files_modified.remove(rel_path)
+                        self._debug("file_deleted", message)
+                        self.workspace.log_activity(
+                            self.agent_id, task.id, "delete_file",
+                            f"Deleted: {file_path}"
+                        )
+                    else:
+                        self._debug("file_error", message)
+                        recent_errors.append(message[:300])
+
+                    help_hint = ""
+                    if not success and self._should_suggest_help():
+                        help_hint = "\n\n💡 **Tip:** Delete failed. Use `<read_file>` or `<list_dir>` to confirm the path, or `<help>` for guidance."
+
                     self._conversation.append(Message(
                         role="user",
                         content=f"{message}{help_hint}\n\nContinue with the task."
@@ -1136,14 +1352,14 @@ Now try the suggested approach. You can ask for help again if needed."""
                     self._debug("think", action_content)
                     self._conversation.append(Message(
                         role="user",
-                        content="Good reasoning. Now take an action: <read_file>, <write_file>, <edit_file>, <list_dir>, <shell>, <help>, <done>, or <error>."
+                        content="Good reasoning. Now take an action: <read_file>, <write_file>, <edit_file>, <list_dir>, <search_files>, <delete_file>, <shell>, <help>, <done>, or <error>."
                     ))
                 
                 else:
                     self._debug("unknown", f"Unknown action type, raw response: {response[:200]}")
                     self._conversation.append(Message(
                         role="user",
-                        content="Please respond with one of: <read_file>, <write_file>, <edit_file>, <list_dir>, <shell>, <think>, <help>, <done>, or <error>."
+                        content="Please respond with one of: <read_file>, <write_file>, <edit_file>, <list_dir>, <search_files>, <delete_file>, <shell>, <think>, <help>, <done>, or <error>."
                     ))
             
             else:

@@ -23,7 +23,7 @@ help:
 
 # Installation
 install:
-	pip install -r requirements.txt
+	pip install .
 
 install-dev:
 	pip install -e ".[dev]"
@@ -37,10 +37,10 @@ test-cov:
 
 # Running
 run:
-	python main.py
+	python -m counsel
 
 shell:
-	python main.py -i
+	python -m counsel -i
 
 # Docker - CPU
 docker-build:

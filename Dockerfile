@@ -21,9 +21,13 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
+COPY pyproject.toml README.md ./
 COPY counsel/ ./counsel/
 COPY main.py .
 COPY tests/ ./tests/
+
+# Install console entrypoint without re-resolving deps
+RUN pip install --no-cache-dir --no-deps .
 
 # Create projects directory for agent work
 RUN mkdir -p /app/projects
@@ -34,4 +38,4 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
 # Default command (interactive mode)
-CMD ["python", "main.py", "-i", "-w", "/app/projects"]
+CMD ["python", "-m", "counsel", "-i", "-w", "/app/projects"]

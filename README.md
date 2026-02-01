@@ -4,7 +4,7 @@
 
 An intelligent orchestration system that breaks down complex tasks into dependency graphs and executes them using self-correcting AI agents with built-in verification.
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/your-org/counsel)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/your-org/counsel)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 
@@ -34,18 +34,26 @@ An intelligent orchestration system that breaks down complex tasks into dependen
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install (local)
+pip install .
+
+# Or for development
+pip install -e ".[dev]"
 
 # Run (will prompt for model selection on first run)
-python main.py
+counsel
+
+# Alternate entrypoint
+python -m counsel
 ```
+
+By default, new projects are created under the `projects/` directory unless you pass `-w/--workspace`.
 
 ### Task Verification (ON by default)
 
 ```bash
 # Verification is now enabled by default!
-python main.py "Create a REST API with user authentication"
+counsel "Create a REST API with user authentication"
 
 # Toggle verification off/on in interactive mode
 projects > @verify
@@ -60,7 +68,7 @@ projects > @verify
 ### Interactive Shell
 
 ```bash
-python main.py
+counsel
 ```
 
 ```
@@ -128,7 +136,7 @@ Verification Results
 ### Command Line Options
 
 ```bash
-python main.py --help
+counsel --help
 
 Options:
   task                      Task to execute (optional)
@@ -205,8 +213,10 @@ Agents have direct file operations tools that are **preferred over shell command
 |------|--------|----------|
 | **read_file** | `<read_file>path</read_file>` | Read file contents with line numbers |
 | **list_dir** | `<list_dir>path</list_dir>` | List directory contents |
+| **search_files** | `<search_files>pattern\|\|\|path(optional)\|\|\|regex\|literal(optional)</search_files>` | Search text across files |
 | **write_file** | `<write_file path="path">content</write_file>` | Create or overwrite a file |
 | **edit_file** | `<edit_file path="path">old\|\|\|new</edit_file>` | Replace specific text in a file |
+| **delete_file** | `<delete_file>path</delete_file>` | Delete a file |
 | **help** | `<help>description</help>` | Ask supervisor for guidance when stuck |
 
 ### Why Direct File Operations?
@@ -355,7 +365,9 @@ export COUNSEL_LOG_LEVEL="INFO"
 CounselOfAgents/
 ├── counsel/                 # Main package
 │   ├── __init__.py         # Package exports
+│   ├── __main__.py         # `python -m counsel` entrypoint
 │   ├── agent.py            # Worker agents + supervisor intervention
+│   ├── cli.py              # CLI implementation
 │   ├── config.py           # Configuration with validation
 │   ├── jobs.py             # Job persistence
 │   ├── llm.py              # LLM interface
@@ -368,7 +380,7 @@ CounselOfAgents/
 │   └── workspace.py        # Shared state + file tree
 ├── tests/                  # Test suite
 ├── projects/               # Agent working directory
-├── main.py                 # CLI entry point
+├── main.py                 # CLI wrapper (legacy)
 ├── Dockerfile
 ├── Dockerfile.cuda
 ├── docker-compose.yml
@@ -434,7 +446,7 @@ make docker-gpu
 ```bash
 # CPU
 docker-compose up -d
-docker-compose exec counsel-agents python main.py
+docker-compose exec counsel-agents python -m counsel
 
 # GPU
 docker-compose -f docker-compose.cuda.yml up -d

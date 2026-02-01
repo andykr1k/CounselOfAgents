@@ -110,7 +110,7 @@ class Workspace:
                 elif os.path.isdir(full_path) and max_depth > 0:
                     self._directories.add(rel_path)
                     self._scan_directory(full_path, max_depth - 1)
-        except PermissionError:
+        except (PermissionError, FileNotFoundError):
             pass
     
     @property
@@ -159,6 +159,15 @@ class Workspace:
             parent = os.path.dirname(rel_path)
             if parent:
                 self._directories.add(parent)
+
+    def remove_file(self, path: str) -> None:
+        """Remove a file from the workspace registry."""
+        with self._lock:
+            if os.path.isabs(path):
+                rel_path = os.path.relpath(path, self._root_dir)
+            else:
+                rel_path = path
+            self._files.pop(rel_path, None)
     
     def register_directory(self, path: str, agent_id: Optional[str] = None) -> None:
         with self._lock:

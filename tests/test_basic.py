@@ -26,6 +26,7 @@ from counsel import (
     VerificationResult,
     VerificationStatus,
     VerificationIssue,
+    VerificationManager,
     CounselLogger,
     get_logger,
     LogLevel,
@@ -167,6 +168,12 @@ class TestWorkspace:
         workspace.register_file("test.txt", agent_id="agent_1")
         files = workspace.get_files()
         assert "test.txt" in files
+
+    def test_remove_file(self, workspace):
+        workspace.register_file("remove_me.txt", agent_id="agent_1")
+        workspace.remove_file("remove_me.txt")
+        files = workspace.get_files()
+        assert "remove_me.txt" not in files
     
     def test_register_directory(self, workspace):
         workspace.register_directory("subdir", agent_id="agent_1")
@@ -322,6 +329,26 @@ class TestVerification:
         assert data["severity"] == "major"
         assert data["file_path"] == "src/utils.py"
         assert data["line_number"] == 42
+
+    def test_verification_retry_policy(self):
+        manager = VerificationManager(max_retries=2)
+
+        passed = VerificationResult(
+            task_id="task_1",
+            status=VerificationStatus.PASSED,
+            score=0.9,
+            summary="ok"
+        )
+        failed = VerificationResult(
+            task_id="task_1",
+            status=VerificationStatus.FAILED,
+            score=0.1,
+            summary="nope"
+        )
+
+        assert manager.should_retry(passed, 0) is False
+        assert manager.should_retry(failed, 0) is True
+        assert manager.should_retry(failed, 2) is False
 
 
 class TestLogging:

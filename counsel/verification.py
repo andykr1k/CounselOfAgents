@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from counsel.config import get_config, AgentConfig
+from counsel.config import get_config, AgentConfig, Config
 from counsel.llm import LLM, Message, get_llm
 from counsel.workspace import Workspace, get_workspace
 from counsel.task_graph import Task, TaskStatus
@@ -268,7 +268,14 @@ class TaskVerifier:
             
             # Check if files actually exist and get their contents
             for file_path in all_files[:5]:  # Check first 5 files
-                full_path = os.path.join(self.workspace.cwd, file_path)
+                if os.path.isabs(file_path):
+                    full_path = file_path
+                else:
+                    full_path = os.path.join(self.workspace.root_dir, file_path)
+                    if not os.path.exists(full_path):
+                        alt_path = os.path.join(self.workspace.cwd, file_path)
+                        if os.path.exists(alt_path):
+                            full_path = alt_path
                 if os.path.exists(full_path):
                     try:
                         with open(full_path, 'r') as f:
@@ -418,7 +425,14 @@ class TaskVerifier:
         if files_created:
             missing_files = []
             for file_path in files_created:
-                full_path = os.path.join(self.workspace.cwd, file_path)
+                if os.path.isabs(file_path):
+                    full_path = file_path
+                else:
+                    full_path = os.path.join(self.workspace.root_dir, file_path)
+                    if not os.path.exists(full_path):
+                        alt_path = os.path.join(self.workspace.cwd, file_path)
+                        if os.path.exists(alt_path):
+                            full_path = alt_path
                 if not os.path.exists(full_path):
                     missing_files.append(file_path)
             
@@ -553,19 +567,15 @@ class VerificationManager:
     def should_retry(self, verification_result: VerificationResult, attempt: int) -> bool:
         """
         Determine if a task should be retried based on verification result.
+        Trust the LLM's status field as the source of truth.
         """
-        if verification_result.passed:
-            return False
-        
         if attempt >= self.max_retries:
             return False
-        
-        # Don't retry if score is very low (fundamentally wrong approach)
-        if verification_result.score < 0.2:
+
+        status = verification_result.status
+        if status == VerificationStatus.PASSED:
             return False
-        
-        # Retry if recommended or if there are fixable issues
-        return verification_result.retry_recommended or verification_result.score >= 0.3
+        return True
     
     def clear_cache(self, task_id: Optional[str] = None):
         """Clear verification cache."""
@@ -592,11 +602,20 @@ def get_verifier() -> TaskVerifier:
     return _verifier
 
 
-def get_verification_manager() -> VerificationManager:
+def get_verification_manager(
+    config: Optional[Config] = None,
+    llm: Optional[LLM] = None,
+    workspace: Optional[Workspace] = None
+) -> VerificationManager:
     """Get the global VerificationManager instance (thread-safe)."""
     global _verification_manager
     if _verification_manager is None:
-        _verification_manager = VerificationManager()
+        cfg = config or get_config()
+        _verification_manager = VerificationManager(
+            verifier=TaskVerifier(llm=llm, workspace=workspace, config=cfg.agent),
+            max_retries=cfg.verification.max_retries,
+            min_passing_score=cfg.verification.min_passing_score
+        )
     return _verification_manager
 
 

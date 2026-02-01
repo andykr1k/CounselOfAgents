@@ -18,4 +18,4 @@ services:
       - PYTHONUNBUFFERED=1
       - AGENT_VERBOSE=1
     # Override command if needed
-    # command: python main.py "Create a hello world project"
+    # command: python -m counsel "Create a hello world project"

@@ -23,8 +23,7 @@ from counsel.task_graph import TaskGraph, Task, TaskStatus
 from counsel.agent import AgentPool, AgentResult, DebugCallback
 from counsel.workspace import Workspace, get_workspace
 from counsel.verification import (
-    TaskVerifier, VerificationManager, VerificationResult, VerificationStatus,
-    get_verification_manager
+    TaskVerifier, VerificationManager, VerificationResult
 )
 
 
@@ -50,6 +49,8 @@ Each agent has access to:
    - `<write_file>` - Create or overwrite files
    - `<edit_file>` - Edit specific parts of files
    - `<list_dir>` - List directory contents
+   - `<search_files>` - Search for text across files
+   - `<delete_file>` - Delete a file
 
 2. **Shell Commands** (for running programs):
    - `<shell>` - Run commands like `python script.py`, `pip install`, `mkdir dirname`, etc.
@@ -107,6 +108,7 @@ You MUST respond with a valid JSON object in this exact format:
 5. **Use Existing Files**: Reference existing files/directories from workspace context
 6. **Don't over-decompose**: Simple projects (few files) can be 2-4 tasks, not 10+
 7. **Bundle environment setup**: Venv creation + pip install should be ONE task
+8. **Default project location**: Create new projects under the workspace root (by default `projects/`) unless the user specifies another workspace
 
 ## Examples
 
@@ -385,7 +387,11 @@ class Orchestrator:
         
         # Initialize verification manager if needed
         if verify_tasks and not self.verification_manager:
-            self.verification_manager = get_verification_manager()
+            self.verification_manager = VerificationManager(
+                verifier=TaskVerifier(llm=self.llm, workspace=self.workspace, config=self.config.agent),
+                max_retries=max_retries,
+                min_passing_score=self.config.verification.min_passing_score
+            )
         
         # Track when we last saved to debounce disk writes
         last_save_time = datetime.now()
@@ -430,19 +436,22 @@ class Orchestrator:
             agent_result = await pool.execute_task(task, context)
             return task.id, agent_result
         
-        async def verify_and_maybe_retry(task_id: str, agent_result: AgentResult) -> Tuple[bool, Optional[str]]:
+        async def verify_and_maybe_retry(
+            task_id: str,
+            agent_result: AgentResult
+        ) -> Tuple[bool, Optional[str], Optional[VerificationResult]]:
             """
             Verify a completed task and determine if retry is needed.
             
             Returns:
-                (should_retry, remediation_instructions)
+                (should_retry, remediation_instructions, verification_result)
             """
             if not verify_tasks or not self.verification_manager:
-                return False, None
+                return False, None, None
             
             task = graph.get_task(task_id)
             if not task:
-                return False, None
+                return False, None, None
             
             self._update_progress("verifying", f"🔍 Verifying {task_id}...")
             
@@ -459,7 +468,7 @@ class Orchestrator:
             
             if verification.passed:
                 self._update_progress("verified", f"✓ {task_id} verified ({verification.score:.0%})")
-                return False, None
+                return False, None, verification
             
             # Check if we should retry
             retry_count = task_retry_counts.get(task_id, 0)
@@ -471,13 +480,29 @@ class Orchestrator:
                     "retry_needed",
                     f"⚠ {task_id} needs remediation (attempt {retry_count + 1}/{max_retries})"
                 )
-                return True, remediation
+                return True, remediation, verification
             
             self._update_progress(
                 "verification_failed",
                 f"✗ {task_id} failed verification: {verification.summary}"
             )
-            return False, None
+            return False, None, verification
+
+        def stop_all_tasks(reason: str) -> None:
+            """Cancel running tasks and block all remaining pending/ready tasks."""
+            for running_id, running_task in running_tasks.items():
+                running_task.cancel()
+                if running_id not in result.results:
+                    result.results[running_id] = AgentResult(
+                        task_id=running_id,
+                        success=False,
+                        error=reason
+                    )
+                graph.mark_failed(running_id, reason)
+            for task in graph.tasks.values():
+                if task.status in (TaskStatus.PENDING, TaskStatus.READY):
+                    task.status = TaskStatus.BLOCKED
+                    task.error = reason
         
         # Main execution loop - starts tasks as soon as they're ready
         while not graph.is_complete() and not failed:
@@ -512,7 +537,7 @@ class Orchestrator:
                 
                 if agent_result.success:
                     # Verify the task if verification is enabled
-                    should_retry, remediation = await verify_and_maybe_retry(task_id, agent_result)
+                    should_retry, remediation, verification = await verify_and_maybe_retry(task_id, agent_result)
                     
                     if should_retry and remediation:
                         # Reset task for retry
@@ -530,7 +555,16 @@ class Orchestrator:
                             task.metadata['original_description'] = original_desc
                             task.description = f"{original_desc}\n\n{remediation}"
                         continue
-                    
+
+                    if verification and not verification.passed:
+                        graph.mark_failed(task_id, f"Verification failed: {verification.summary}")
+                        if not continue_on_failure:
+                            result.error = f"Task {task_id} failed verification: {verification.summary}"
+                            failed = True
+                            stop_all_tasks(f"Cancelled due to verification failure of {task_id}")
+                            break
+                        continue
+
                     # Task passed (or verification not enabled)
                     graph.mark_completed(task_id, agent_result.result)
                     completed_results[task_id] = agent_result.result
@@ -553,9 +587,7 @@ class Orchestrator:
                     if not continue_on_failure:
                         result.error = f"Task {task_id} failed: {agent_result.error}"
                         failed = True
-                        # Cancel remaining tasks
-                        for remaining in running_tasks.values():
-                            remaining.cancel()
+                        stop_all_tasks(f"Cancelled due to failure of {task_id}")
                         break
             
             # Debounced save - only write to disk every few seconds
@@ -577,6 +609,8 @@ class Orchestrator:
                         self._update_progress("task_done", f"✓ {task_id} completed")
                     else:
                         graph.mark_failed(task_id, agent_result.error or "Unknown error")
+        elif running_tasks and failed:
+            await asyncio.gather(*running_tasks.values(), return_exceptions=True)
         
         result.success = graph.is_successful()
         result.completed_at = datetime.now().isoformat()
